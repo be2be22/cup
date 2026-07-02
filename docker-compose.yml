@@ -14,6 +14,14 @@ services:
       - xray
       - panel
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
 
   xray:
     image: teddysun/xray:latest
@@ -23,6 +31,14 @@ services:
     restart: unless-stopped
     # کانفیگ اولیه توسط پنل نوشته و بازنویسی می‌شود
     command: ["xray", "run", "-config", "/etc/xray/config.json"]
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
 
   panel:
     build: ./panel
@@ -41,6 +57,14 @@ services:
       - panel_data:/data
       - /var/run/docker.sock:/var/run/docker.sock
     restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
 
 volumes:
   xray_data:
