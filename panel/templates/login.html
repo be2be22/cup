@@ -1,0 +1,13 @@
+{% extends "base.html" %}
+{% block content %}
+<div class="login-box">
+  <h1>ورود به پنل</h1>
+  <form method="POST">
+    <label>نام کاربری</label>
+    <input type="text" name="username" required autofocus>
+    <label>رمز عبور</label>
+    <input type="password" name="password" required>
+    <button type="submit">ورود</button>
+  </form>
+</div>
+{% endblock %}
