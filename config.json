@@ -1,0 +1,18 @@
+{
+  "telegram": {
+    "channel_id": "-1004412008547",
+    "bot_token_env": "TELEGRAM_BOT_TOKEN"
+  },
+  "api": {
+    "provider": "espn",
+    "base_url": "https://site.api.espn.com/apis/site/v2/sports/soccer",
+    "league": "fifa.world",
+    "note": "ESPN's public scoreboard endpoint is free and requires no API key or account."
+  },
+  "timezone": "Asia/Tehran",
+  "cron_recommended": {
+    "main_monitor_minutes": 1
+  },
+  "language": "fa",
+  "commentary_style": "football_reporter"
+}
