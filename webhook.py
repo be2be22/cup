@@ -39,6 +39,13 @@ HANDLERS = {
     "help": bot_logic.get_help_text,
 }
 
+# Shown immediately while the handler is working. Without this the user sees
+# the button's loading spinner stop (because we answerCallbackQuery right
+# away) but the message text doesn't change for 10-20s while we wait on
+# ESPN + the AI analysis endpoint, which feels broken. Editing the message
+# to a Persian "loading..." first makes the delay feel much shorter.
+LOADING_TEXT = "⏳ یک ثانیه، دارم اطلاعات رو از ESPN و تحلیل هوش مصنوعی می‌گیرم..."
+
 
 def _handle_update(update):
     if "callback_query" in update:
@@ -59,6 +66,13 @@ def _handle_update(update):
         handler = HANDLERS.get(data)
         if not handler:
             return
+
+        # Show a loading placeholder immediately so the user knows the
+        # tap was registered. The handlers (especially "next") can take
+        # 5-15s because of the AI analysis endpoint - without this edit
+        # the message looks frozen.
+        if data != "help":
+            edit_message(chat_id, message_id, LOADING_TEXT, reply_markup=None)
 
         try:
             text = handler()

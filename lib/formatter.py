@@ -13,6 +13,13 @@ FLAGS = {
     "Ecuador": "🇪🇨", "Qatar": "🇶🇦", "Wales": "🏴", "Poland": "🇵🇱",
     "Serbia": "🇷🇸", "Switzerland": "🇨🇭", "Denmark": "🇩🇰",
     "Nigeria": "🇳🇬", "Egypt": "🇪🇬",
+    # Extra teams that may show up in 2026 knockout stage:
+    "Norway": "🇳🇴", "Sweden": "🇸🇪", "Austria": "🇦🇹", "Turkey": "🇹🇷",
+    "Ukraine": "🇺🇦", "Scotland": "🏴", "Ireland": "🇮🇪",
+    "Colombia": "🇨🇴", "Peru": "🇵🇪", "Chile": "🇨🇱", "Paraguay": "🇵🇾",
+    "Costa Rica": "🇨🇷", "Panama": "🇵🇦", "Honduras": "🇭🇳",
+    "South Africa": "🇿🇦", "Ivory Coast": "🇨🇮", "Mali": "🇲🇱",
+    "Algeria": "🇩🇿", "Bosnia and Herzegovina": "🇧🇦",
 }
 
 TEAM_FA = {
@@ -27,6 +34,13 @@ TEAM_FA = {
     "Ecuador": "اکوادور", "Qatar": "قطر", "Wales": "ولز", "Poland": "لهستان",
     "Serbia": "صربستان", "Switzerland": "سوئیس", "Denmark": "دانمارک",
     "Nigeria": "نیجریه", "Egypt": "مصر",
+    # Extra teams that may show up in 2026 knockout stage:
+    "Norway": "نروژ", "Sweden": "سوئد", "Austria": "اتریش", "Turkey": "ترکیه",
+    "Ukraine": "اوکراین", "Scotland": "اسکاتلند", "Ireland": "ایرلند",
+    "Colombia": "کلمبیا", "Peru": "پرو", "Chile": "شیلی", "Paraguay": "پاراگوئه",
+    "Costa Rica": "کاستاریکا", "Panama": "پاناما", "Honduras": "هندوراس",
+    "South Africa": "آفریقای جنوبی", "Ivory Coast": "ساحل عاج", "Mali": "مالی",
+    "Algeria": "الجزایر", "Bosnia and Herzegovina": "بوسنی و هرزگوین",
 }
 
 # Player-name translations are best-effort; unknown names fall back to
@@ -56,10 +70,17 @@ def fa(t, mapping):
 
 
 def to_jalali(gs):
-    """Best-effort Gregorian -> Jalali conversion for display purposes."""
+    """Best-effort Gregorian -> Jalali conversion for display purposes.
+
+    Also converts the timestamp to Tehran time (UTC+3:30) so users see
+    kick-off times in their local timezone instead of UTC.
+    """
     try:
-        from datetime import datetime
+        from datetime import datetime, timedelta, timezone
         dt = datetime.fromisoformat(gs.replace("Z", "+00:00"))
+        # Convert UTC -> Tehran (+03:30) before extracting hour/minute.
+        tehran_tz = timezone(timedelta(hours=3, minutes=30))
+        dt = dt.astimezone(tehran_tz)
         gy, gm, gd = dt.year, dt.month, dt.day
         g_d_m = [0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334]
         gy2 = gy + 1 if gm > 2 else gy
@@ -80,7 +101,7 @@ def to_jalali(gs):
         else:
             jm = 7 + ((days - 186) // 30)
             jd = 1 + ((days - 186) % 30)
-        h = (dt.hour + 3) % 24  # naive UTC -> Tehran (+03:30, minutes dropped)
+        h = dt.hour
         m = dt.minute
         return f"{jd}/{jm:02d}/{jy} ساعت {h:02d}:{m:02d}"
     except Exception:

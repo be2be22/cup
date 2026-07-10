@@ -7,13 +7,45 @@ and need no API key or account. We keep a short in-memory cache
 each cron invocation is a fresh process anyway, so this does not replace
 being reasonably gentle with request frequency (main_monitor.py is meant
 to run once every 1-2 minutes via a scheduled task, not in a loop).
+
+Important: the default scoreboard endpoint only returns events for the
+current "week" (typically just today + a couple of nearby days). To find
+upcoming fixtures we always request a 30-day window starting today via
+the `dates` query parameter - without it, the "next match" button on the
+bot menu and the pre-match cron notifications silently see no upcoming
+games and report "no scheduled matches".
 """
 import json
 import os
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
+
+# How many days ahead to look when fetching the scoreboard. 30 days covers
+# the rest of a World Cup from any point in the tournament and keeps the
+# response payload small enough for a 256MB free-plan server.
+FIXTURE_WINDOW_DAYS = 30
+
+# Translate ESPN's English stage names to Persian for display. Falls back
+# to the English name (or a generic label) for anything not listed here.
+_STAGE_FA = {
+    'Group': 'مرحله گروهی جام جهانی ۲۰۲۶',
+    'Round of 32': 'یک‌سی‌ودوم نهایی جام جهانی ۲۰۲۶',
+    'Rd of 16': 'یک‌شانزدهم نهایی جام جهانی ۲۰۲۶',
+    'Round of 16': 'یک‌شانزدهم نهایی جام جهانی ۲۰۲۶',
+    'Quarterfinals': 'یک‌چهارم نهایی جام جهانی ۲۰۲۶',
+    'Semifinals': 'نیمه‌نهایی جام جهانی ۲۰۲۶',
+    '3rd-Place Match': 'دیدار رده‌بندی جام جهانی ۲۰۲۶',
+    'Final': 'فینال جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Group': 'مرحله گروهی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Round of 32': 'یک‌سی‌ودوم نهایی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Round of 16': 'یک‌شانزدهم نهایی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Quarterfinals': 'یک‌چهارم نهایی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Semifinals': 'نیمه‌نهایی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, 3rd-Place Match': 'دیدار رده‌بندی جام جهانی ۲۰۲۶',
+    'FIFA World Cup, Final': 'فینال جام جهانی ۲۰۲۶',
+}
 
 
 def _load_league():
@@ -45,6 +77,12 @@ class FootballAPIClient:
             print(f"[api_client] ESPN request failed: {e}")
             return None
 
+    def _date_range(self):
+        """Build the `dates=YYYYMMDD-YYYYMMDD` query window starting today."""
+        today = datetime.now(timezone.utc).date()
+        end = today + timedelta(days=FIXTURE_WINDOW_DAYS)
+        return f"{today.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
+
     def _get_scoreboard(self):
         cache_key = f"scoreboard_{self.league}"
         now = datetime.now(timezone.utc)
@@ -54,7 +92,10 @@ class FootballAPIClient:
             and (now - self.cache_time).total_seconds() < 120
         ):
             return self.cache[cache_key]
-        url = f"{self.BASE_URL}/{self.league}/scoreboard"
+        # `dates` is what makes ESPN return upcoming fixtures too - without
+        # it the scoreboard only shows events from the current week, which
+        # during the knockout stage can be just one already-finished match.
+        url = f"{self.BASE_URL}/{self.league}/scoreboard?dates={self._date_range()}"
         data = self._request(url)
         if data:
             self.cache[cache_key] = data
@@ -120,6 +161,26 @@ class FootballAPIClient:
                     'minute': clock, 'detail': cd,
                 })
 
+        # Stage label - ESPN stores this in season.type.name (e.g.
+        # "Quarterfinals") and also in competitions[0].altGameNote
+        # ("FIFA World Cup, Quarterfinals"). We translate the most common
+        # English stage names to Persian so users don't see raw English.
+        # Note: season.type can sometimes be just an int (the type id), so
+        # we use a chain of .get() calls with empty-dict fallbacks.
+        season_type = event.get('season', {}).get('type') or {}
+        if not isinstance(season_type, dict):
+            season_type = {}
+        stage_en = (
+            season_type.get('name', '')
+            or comps.get('altGameNote', '')
+            or ''
+        )
+        stage_fa = _STAGE_FA.get(stage_en, stage_en if stage_en else 'جام جهانی ۲۰۲۶')
+
+        # City + country of the venue, for nicer pre-match messages.
+        venue_addr = comps.get('venue', {}).get('address', {}) or {}
+        venue_city = venue_addr.get('city', '') or ''
+
         return {
             'id': event.get('id'),
             'name': event.get('name', ''),
@@ -132,6 +193,8 @@ class FootballAPIClient:
             'status_state': status.get('state', ''),
             'clock': event.get('status', {}).get('displayClock', "0'"),
             'venue': comps.get('venue', {}).get('fullName', ''),
+            'venue_city': venue_city,
+            'stage': stage_fa,
             'goals': goals,
             'cards': cards,
             'penalties': penalties,

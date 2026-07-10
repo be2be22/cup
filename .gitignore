@@ -1,3 +1,7 @@
 __pycache__/
 *.pyc
 .env
+# local_settings.py holds bot token + AI key per deployment - never commit
+local_settings.py
+# state.json is runtime state written by the cron monitor - never commit
+state.json

@@ -87,14 +87,21 @@ def get_next_match_text():
     upcoming.sort(key=_parse_date)
     m = upcoming[0]
 
+    # Use the actual stage name from ESPN (e.g. "یک‌چهارم نهایی جام جهانی ۲۰۲۶")
+    # instead of the previously-hardcoded "مرحله گروهی". Also include venue city
+    # if available for a richer pre-match message.
+    stage = m.get('stage', '') or 'جام جهانی ۲۰۲۶'
+    venue_parts = [p for p in [m.get('venue', ''), m.get('venue_city', '')] if p]
+    venue = '، '.join(venue_parts)
+
     analysis = build_analysis(
         m['home_team'], m['away_team'],
-        stage='مرحله گروهی جام جهانی ۲۰۲۶', venue=m.get('venue', ''), group='',
+        stage=stage, venue=venue, group='',
     )
     return fmt.format_prematch({
         'home_team': m['home_team'], 'away_team': m['away_team'],
-        'time': m.get('date', ''), 'venue': m.get('venue', ''),
-        'stage': 'مرحله گروهی جام جهانی ۲۰۲۶',
+        'time': m.get('date', ''), 'venue': venue,
+        'stage': stage,
     }, analysis)
 
 

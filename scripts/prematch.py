@@ -38,17 +38,23 @@ def main(match_id=None):
         if state.get('prematch_sent'):
             continue
 
+        # Use the actual stage name from ESPN instead of the previously-
+        # hardcoded "مرحله گروهی". Same fix as in lib/bot_logic.py.
+        stage = match.get('stage', '') or 'جام جهانی ۲۰۲۶'
+        venue_parts = [p for p in [match.get('venue', ''), match.get('venue_city', '')] if p]
+        venue = '، '.join(venue_parts)
+
         analysis = build_analysis(
             match['home_team'], match['away_team'],
-            stage='مرحله گروهی جام جهانی ۲۰۲۶', venue=match.get('venue', ''), group='',
+            stage=stage, venue=venue, group='',
         )
 
         msg = fmt.format_prematch({
             'home_team': match['home_team'],
             'away_team': match['away_team'],
             'time': match.get('date', ''),
-            'venue': match.get('venue', ''),
-            'stage': 'مرحله گروهی جام جهانی ۲۰۲۶',
+            'venue': venue,
+            'stage': stage,
         }, analysis)
 
         send_message(msg)

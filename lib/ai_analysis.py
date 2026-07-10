@@ -13,6 +13,12 @@ If these are not set, or the request fails for any reason (bad key,
 endpoint down, timeout), generate_prematch_analysis() returns None and
 the caller falls back to a simple message instead of crashing the cron
 job - a World Cup update is more important than a fancy analysis.
+
+Important: many OpenAI-compatible routers (9router included) append a
+trailing `data: [DONE]` SSE marker after the JSON body even when
+streaming is not requested. Plain `json.loads()` then fails with
+"Extra data" because there's text after the closing `}`. We strip any
+trailing SSE frames before parsing so the AI analysis actually works.
 """
 import json
 import urllib.request
@@ -20,7 +26,10 @@ import urllib.request
 from lib import settings
 
 DEFAULT_MODEL = "oc/mimo-v2.5-free"
-TIMEOUT_SECONDS = 25
+# 25s was too long for the interactive bot menu - users saw a 20-30s
+# delay before the message updated. 12s is enough for most prompts and
+# if the AI is slower we fall back to the static analysis gracefully.
+TIMEOUT_SECONDS = 12
 
 
 def _config():
@@ -28,6 +37,48 @@ def _config():
     key = settings.get("AI_API_KEY", "")
     model = settings.get("AI_MODEL", DEFAULT_MODEL)
     return base, key, model
+
+
+def _extract_json(body):
+    """Pull the first JSON object out of an HTTP body that may have a
+    trailing `data: [DONE]` SSE frame (or other non-JSON noise)."""
+    body = body.strip()
+    # Try the simple path first - most of the time the body is just JSON.
+    try:
+        return json.loads(body)
+    except json.JSONDecodeError:
+        pass
+    # Otherwise find the first complete JSON object ({ ... }) and parse
+    # just that. This handles `{"...":"..."}data: [DONE]` and similar.
+    depth = 0
+    start = -1
+    in_string = False
+    escape = False
+    for i, ch in enumerate(body):
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if in_string:
+            continue
+        if ch == '{':
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == '}':
+            depth -= 1
+            if depth == 0 and start >= 0:
+                candidate = body[start:i + 1]
+                try:
+                    return json.loads(candidate)
+                except json.JSONDecodeError:
+                    start = -1  # keep scanning for the next object
+    raise json.JSONDecodeError("no JSON object found in body", body, 0)
 
 
 def generate_prematch_analysis(home_team_fa, away_team_fa, stage="", venue="", group=""):
@@ -64,7 +115,8 @@ def generate_prematch_analysis(home_team_fa, away_team_fa, stage="", venue="", g
             },
         )
         with urllib.request.urlopen(req, timeout=TIMEOUT_SECONDS) as resp:
-            data = json.loads(resp.read().decode())
+            raw = resp.read().decode()
+        data = _extract_json(raw)
         return data["choices"][0]["message"]["content"].strip()
     except Exception as e:
         print(f"[ai_analysis] AI request failed, falling back: {e}")
