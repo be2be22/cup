@@ -37,6 +37,9 @@ HANDLERS = {
     "next": bot_logic.get_next_match_text,
     "today": bot_logic.get_today_text,
     "help": bot_logic.get_help_text,
+    "form": bot_logic.get_form_text,
+    "h2h": bot_logic.get_h2h_text,
+    "leaders": bot_logic.get_leaders_text,
 }
 
 # Shown immediately while the handler is working. Without this the user sees

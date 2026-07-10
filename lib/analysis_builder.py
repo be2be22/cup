@@ -2,13 +2,16 @@
 Shared pre-match analysis text builder.
 
 Used by scripts/prematch.py (channel post) and lib/bot_logic.py (bot
-button reply) so both places behave identically: try AI analysis first,
-fall back to the static hand-written dataset, and if neither is
-available just say so instead of crashing.
+button reply) so both places behave identically: try AI analysis first
+(with live ESPN context so it's current, not stale), fall back to the
+static hand-written dataset, and if neither is available just say so
+instead of crashing.
 """
 from lib.formatter import fa, TEAM_FA
 from lib.ai_analysis import generate_prematch_analysis
 from lib.analysis_data import TEAM_ANALYSIS, MATCHUP_PROBABILITIES
+from lib.match_summary import fetch_summary, build_match_context
+from lib.api_client import _load_league
 
 
 def static_probabilities(home, away):
@@ -37,11 +40,37 @@ def static_analysis(home, away):
     )
 
 
-def build_analysis(home, away, stage='', venue='', group=''):
-    """AI analysis if configured and reachable, otherwise static fallback,
-    otherwise None (caller should just omit the analysis section)."""
+def _fetch_live_context(event_id, home, away):
+    """Pull ESPN summary data + format it into a context blob for the AI.
+    Returns None if the summary isn't available (e.g. event ID missing
+    or ESPN's summary endpoint returns nothing)."""
+    if not event_id:
+        return None
+    try:
+        league = _load_league()
+        summary = fetch_summary(league, event_id)
+        if not summary:
+            return None
+        ctx = build_match_context(summary, home, away)
+        return ctx.get('ai_context') if ctx else None
+    except Exception as e:
+        print(f"[analysis_builder] live context fetch failed: {e}")
+        return None
+
+
+def build_analysis(home, away, stage='', venue='', group='', event_id=None):
+    """AI analysis (with live ESPN context) if configured and reachable,
+    otherwise static fallback, otherwise None (caller should just omit
+    the analysis section).
+
+    If event_id is provided, we first fetch ESPN's summary for that
+    event and pass the live form / leaders / H2H data to the AI prompt
+    so the analysis reflects the actual current tournament state."""
+    live_context = _fetch_live_context(event_id, home, away)
     ai_text = generate_prematch_analysis(
-        fa(home, TEAM_FA), fa(away, TEAM_FA), stage=stage, venue=venue, group=group
+        fa(home, TEAM_FA), fa(away, TEAM_FA),
+        stage=stage, venue=venue, group=group,
+        live_context=live_context,
     )
     if ai_text:
         return ai_text

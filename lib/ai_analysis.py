@@ -19,6 +19,12 @@ trailing `data: [DONE]` SSE marker after the JSON body even when
 streaming is not requested. Plain `json.loads()` then fails with
 "Extra data" because there's text after the closing `}`. We strip any
 trailing SSE frames before parsing so the AI analysis actually works.
+
+The prompt now includes live data from ESPN's summary endpoint (recent
+form, top scorers, head-to-head, odds) so the AI's analysis reflects
+the actual current tournament state instead of relying on whatever was
+in its training data. This avoids stale claims like "Phil Foden was not
+called up" when ESPN confirms he's been playing and scoring.
 """
 import json
 import urllib.request
@@ -26,10 +32,10 @@ import urllib.request
 from lib import settings
 
 DEFAULT_MODEL = "oc/mimo-v2.5-free"
-# 25s was too long for the interactive bot menu - users saw a 20-30s
-# delay before the message updated. 12s is enough for most prompts and
-# if the AI is slower we fall back to the static analysis gracefully.
-TIMEOUT_SECONDS = 12
+# 12s is enough for most prompts; if the AI is slower we fall back to
+# the static analysis gracefully. The webhook also shows a loading
+# placeholder so the user doesn't see a frozen message.
+TIMEOUT_SECONDS = 15
 
 
 def _config():
@@ -43,13 +49,10 @@ def _extract_json(body):
     """Pull the first JSON object out of an HTTP body that may have a
     trailing `data: [DONE]` SSE frame (or other non-JSON noise)."""
     body = body.strip()
-    # Try the simple path first - most of the time the body is just JSON.
     try:
         return json.loads(body)
     except json.JSONDecodeError:
         pass
-    # Otherwise find the first complete JSON object ({ ... }) and parse
-    # just that. This handles `{"...":"..."}data: [DONE]` and similar.
     depth = 0
     start = -1
     in_string = False
@@ -77,26 +80,53 @@ def _extract_json(body):
                 try:
                     return json.loads(candidate)
                 except json.JSONDecodeError:
-                    start = -1  # keep scanning for the next object
+                    start = -1
     raise json.JSONDecodeError("no JSON object found in body", body, 0)
 
 
-def generate_prematch_analysis(home_team_fa, away_team_fa, stage="", venue="", group=""):
-    base, key, model = _config()
-    if not base or not key:
-        return None
-
+def _build_prompt(home_team_fa, away_team_fa, stage="", venue="", group="", live_context=None):
+    """Build the chat prompt. If live_context is provided (from
+    lib.match_summary.build_match_context), include the current
+    tournament data so the AI doesn't rely on its training-set
+    knowledge of who's injured or called up."""
     prompt = (
         f"یک تحلیل کوتاه پیش از بازی فوتبال به زبان فارسی و لحن گزارشگری "
         f"ورزشی حرفه‌ای بنویس برای بازی {home_team_fa} مقابل {away_team_fa}"
         + (f" در {stage}" if stage else "")
         + (f" (گروه {group})" if group else "")
         + (f" در ورزشگاه {venue}" if venue else "")
-        + ".\nحداکثر ۸ تا ۱۰ خط باشد، شامل: نقاط قوت هر دو تیم، یک نبرد "
-          "کلیدی احتمالی بین دو بازیکن شاخص، و یک پیش‌بینی کلی از روند "
-          "بازی. برای بولد کردن از ستاره (*متن*) در قالب مارک‌داون تلگرام "
-          "استفاده کن. فقط خود متن تحلیل را بنویس، بدون مقدمه یا توضیح "
-          "اضافه درباره‌ی خودت."
+        + ".\n"
+    )
+
+    if live_context:
+        prompt += (
+            "\nاز این داده‌های زنده از جام جهانی استفاده کن و بر اساسشون تحلیل کن "
+            "(این داده‌ها به‌روز هستن، فقط اسم بازیکن‌ها و آماری که اینجا داده شده رو "
+            "بیان کن، حدس نزن):\n"
+            f"{live_context}\n"
+        )
+
+    prompt += (
+        "\nحداکثر ۸ تا ۱۰ خط باشد، شامل: وضعیت فعلی هر دو تیم بر اساس فرم اخیرشون، "
+        "یک نبرد کلیدی احتمالی بین دو بازیکن شاخص (از بین بازیکنانی که در داده‌های "
+        "زنده آمده‌اند)، و یک پیش‌بینی کلی از روند بازی. برای بولد کردن از ستاره "
+        "(*متن*) در قالب مارک‌داون تلگرام استفاده کن. فقط خود متن تحلیل را بنویس، "
+        "بدون مقدمه یا توضیح اضافه درباره‌ی خودت."
+    )
+    return prompt
+
+
+def generate_prematch_analysis(
+    home_team_fa, away_team_fa, stage="", venue="", group="", live_context=None
+):
+    base, key, model = _config()
+    if not base or not key:
+        return None
+
+    prompt = _build_prompt(
+        home_team_fa, away_team_fa,
+        stage=stage, venue=venue, group=group,
+        live_context=live_context,
     )
 
     payload = json.dumps({

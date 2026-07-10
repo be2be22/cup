@@ -47,6 +47,7 @@ def main(match_id=None):
         analysis = build_analysis(
             match['home_team'], match['away_team'],
             stage=stage, venue=venue, group='',
+            event_id=match.get('id'),
         )
 
         msg = fmt.format_prematch({
