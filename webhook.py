@@ -29,6 +29,7 @@ sys.path.insert(0, os.path.dirname(__file__))
 from lib.telegram_sender import send_message, edit_message, answer_callback_query
 from lib.bot_menu import MAIN_MENU, BACK_TO_MENU, WELCOME_TEXT
 from lib import bot_logic
+from lib import settings
 
 HANDLERS = {
     "live": bot_logic.get_live_text,
@@ -90,7 +91,7 @@ def application(environ, start_response):
         start_response("200 OK", [("Content-Type", "text/plain; charset=utf-8")])
         return [b"World Cup bot webhook is up."]
 
-    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "")
+    secret = settings.get("TELEGRAM_WEBHOOK_SECRET", "")
     if secret:
         received = environ.get("HTTP_X_TELEGRAM_BOT_API_SECRET_TOKEN", "")
         if received != secret:

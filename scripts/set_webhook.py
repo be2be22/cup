@@ -22,15 +22,16 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.telegram_sender import set_webhook, delete_webhook, get_webhook_info
+from lib import settings
 
 
 def main():
-    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
-        print("✗ TELEGRAM_BOT_TOKEN is not set in this shell. On alwaysdata, "
-              "environment variables set in the control panel are NOT "
-              "automatically available in an SSH shell - export it manually "
-              "for this one command, e.g.:\n"
-              "  TELEGRAM_BOT_TOKEN=123:abc python3 scripts/set_webhook.py https://...")
+    if not settings.get("TELEGRAM_BOT_TOKEN"):
+        print("✗ TELEGRAM_BOT_TOKEN is not available. Either export it for this "
+              "shell, e.g.:\n"
+              "  TELEGRAM_BOT_TOKEN=123:abc python3 scripts/set_webhook.py https://...\n"
+              "or create local_settings.py on the server first (see "
+              "local_settings.py.example / DEPLOY_SSH.md) and re-run this script.")
         return
 
     if len(sys.argv) < 2:
@@ -48,7 +49,7 @@ def main():
         return
 
     url = sys.argv[1].rstrip("/") + "/"
-    secret = os.environ.get("TELEGRAM_WEBHOOK_SECRET", "") or None
+    secret = settings.get("TELEGRAM_WEBHOOK_SECRET", "") or None
     result = set_webhook(url, secret_token=secret)
     print(result)
     if result and result.get("ok"):

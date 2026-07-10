@@ -15,17 +15,18 @@ the caller falls back to a simple message instead of crashing the cron
 job - a World Cup update is more important than a fancy analysis.
 """
 import json
-import os
 import urllib.request
+
+from lib import settings
 
 DEFAULT_MODEL = "oc/mimo-v2.5-free"
 TIMEOUT_SECONDS = 25
 
 
 def _config():
-    base = os.environ.get("AI_API_BASE_URL", "").rstrip("/")
-    key = os.environ.get("AI_API_KEY", "")
-    model = os.environ.get("AI_MODEL", DEFAULT_MODEL)
+    base = settings.get("AI_API_BASE_URL", "").rstrip("/")
+    key = settings.get("AI_API_KEY", "")
+    model = settings.get("AI_MODEL", DEFAULT_MODEL)
     return base, key, model
 
 

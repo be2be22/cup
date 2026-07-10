@@ -1,0 +1,5 @@
+TELEGRAM_BOT_TOKEN = "8976752071:AAHpGGa8K5CCHyFLHBqN55nyg0H0Ja8vPus"
+TELEGRAM_WEBHOOK_SECRET = "8106f22a72611acb986915d323c1f84b421d6ff15d793dca"
+AI_API_BASE_URL = "https://9router-production-2f7f.up.railway.app/v1"
+AI_API_KEY = "sk-82485ceb8c2b5b7a-sux1um-ceeef45a"
+AI_MODEL = "oc/mimo-v2.5-free"

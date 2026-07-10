@@ -45,10 +45,23 @@ git pull origin main
 دیگه‌ای ری‌استارت بشه. برای سایت وبهوک (WSGI) هم معمولاً بعد از `git pull`
 کافیه یا خودش تغییر رو می‌گیره یا از پنل روی همون سایت گزینه‌ی **Restart** رو بزنید.
 
-## ۴. تنظیم متغیرهای محیطی
-اینا رو از طریق `git pull` نمی‌گیرید (و نباید توی گیت باشن) - همیشه از پنل
-alwaysdata → **Sites** → سایت مربوطه → **Environment** تنظیم می‌شن:
-`TELEGRAM_BOT_TOKEN`, `TELEGRAM_WEBHOOK_SECRET`, `AI_API_BASE_URL`, `AI_API_KEY`, `AI_MODEL`.
+## ۴. تنظیم متغیرهای محیطی / local_settings.py
+این مقادیر عمداً از طریق `git pull` نمی‌آن (نباید توی گیت باشن). دو راه:
+
+- اگه پنل alwaysdata روی سایت شما بخش Environment variables واقعی داره:
+  از اونجا تنظیم کنید.
+- در غیر این صورت (یا برای راحتی)، همین‌جا روی سرور بسازیدش:
+  ```bash
+  cat > ~/worldcup/local_settings.py << 'EOF'
+  TELEGRAM_BOT_TOKEN = "..."
+  TELEGRAM_WEBHOOK_SECRET = "..."
+  AI_API_BASE_URL = "..."
+  AI_API_KEY = "..."
+  AI_MODEL = "oc/mimo-v2.5-free"
+  EOF
+  ```
+  این فایل توی `.gitignore` هست، پس با `git pull` بعدی پاک/بازنویسی نمی‌شه و
+  هیچ‌وقت به گیت‌هاب پوش نمی‌شه.
 
 ## ۵. تست بعد از هر دیپلوی
 ```bash

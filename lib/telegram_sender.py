@@ -13,6 +13,8 @@ import os
 import urllib.request
 import urllib.error
 
+from lib import settings
+
 CONFIG_PATH = os.path.join(os.path.dirname(__file__), '..', 'config.json')
 
 
@@ -24,7 +26,7 @@ def _default_channel_id():
 def _call(method, payload):
     """POST helper for any Telegram Bot API method. Returns the parsed
     JSON response, or None if the token is missing or the call fails."""
-    token = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+    token = settings.get("TELEGRAM_BOT_TOKEN", "")
     if not token:
         print(f"[telegram_sender] TELEGRAM_BOT_TOKEN is not set - {method} not sent.")
         return None

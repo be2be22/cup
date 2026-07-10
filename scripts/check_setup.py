@@ -12,17 +12,20 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.api_client import FootballAPIClient
 from lib.telegram_sender import send_message
+from lib import settings
 
 
 def main():
-    print("1) Checking TELEGRAM_BOT_TOKEN environment variable...")
-    if not os.environ.get("TELEGRAM_BOT_TOKEN"):
-        print("   ✗ Not set. Set it in the alwaysdata panel: Sites > your site > Environment.")
+    print("1) Checking TELEGRAM_BOT_TOKEN (env var or local_settings.py)...")
+    if not settings.get("TELEGRAM_BOT_TOKEN"):
+        print("   ✗ Not set. Either set it in the alwaysdata panel (Sites > your site > "
+              "Environment) if available, or create local_settings.py on the server - "
+              "see local_settings.py.example / DEPLOY_SSH.md.")
     else:
         print("   ✓ Set.")
 
     print("\n2) Checking AI_API_BASE_URL / AI_API_KEY (optional, for AI prematch analysis)...")
-    if not os.environ.get("AI_API_BASE_URL") or not os.environ.get("AI_API_KEY"):
+    if not settings.get("AI_API_BASE_URL") or not settings.get("AI_API_KEY"):
         print("   ⚠ Not set - prematch messages will use the static fallback analysis instead.")
     else:
         print("   ✓ Set.")
