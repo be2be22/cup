@@ -30,6 +30,7 @@ from lib.special_alerts import (
     check_comeback,
     check_star_substitution,
 )
+from lib.stoppage_alert import check_stoppage_announcement
 
 
 def build_events_text(match):
@@ -62,6 +63,12 @@ def main(match_id=None):
 
         # Check for comeback (compare current score to previous)
         check_comeback(match, state)
+
+        # Check for stoppage time announcement (e.g. "5 minutes added")
+        try:
+            check_stoppage_announcement(match)
+        except Exception as e:
+            print(f"[event_monitor] stoppage alert failed: {e}")
 
         # 1. Send new goal/card text messages + check hat-trick
         for g in match['goals']:
