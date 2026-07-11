@@ -132,6 +132,43 @@ def send_video(video_url, caption=None, channel_id=None, parse_mode="Markdown"):
     return bool(result and result.get("ok"))
 
 
+def pin_chat_message(message_id, channel_id=None, disable_notification=True):
+    """Pin a message in the channel. The bot must be an admin with
+    'can_pin_messages' permission.
+
+    Used by lib/live_thread.py to pin the Live Thread scoreboard at
+    the top of the channel so users always see the current score.
+
+    disable_notification=True means pinning won't send a notification
+    to all channel members (silent pin).
+    """
+    if channel_id is None:
+        channel_id = _default_channel_id()
+
+    payload = {
+        "chat_id": channel_id,
+        "message_id": message_id,
+        "disable_notification": disable_notification,
+    }
+    result = _call("pinChatMessage", payload)
+    return bool(result and result.get("ok"))
+
+
+def unpin_chat_message(message_id=None, channel_id=None):
+    """Unpin a specific message (or all messages if message_id is None)
+    from the channel."""
+    if channel_id is None:
+        channel_id = _default_channel_id()
+
+    payload = {"chat_id": channel_id}
+    if message_id is not None:
+        payload["message_id"] = message_id
+        result = _call("unpinChatMessage", payload)
+    else:
+        result = _call("unpinAllChatMessages", payload)
+    return bool(result and result.get("ok"))
+
+
 def set_webhook(url, secret_token=None):
     payload = {"url": url, "allowed_updates": ["message", "callback_query"]}
     if secret_token:

@@ -111,6 +111,15 @@ def update_live_thread(match):
                 live_thread_msg_id=result,
                 live_thread_last_edit=now,
             )
+            # Pin the new Live Thread message at the top of the channel
+            # so users always see the current score. Silent pin (no
+            # notification) to avoid spamming members.
+            try:
+                from lib.telegram_sender import pin_chat_message
+                pin_chat_message(result, disable_notification=True)
+                print(f"[live_thread] pinned message {result} for match {match_id}")
+            except Exception as e:
+                print(f"[live_thread] pin failed: {e}")
             return True
         return False
 
@@ -129,6 +138,12 @@ def update_live_thread(match):
                 live_thread_msg_id=result,
                 live_thread_last_edit=now,
             )
+            # Re-pin the new message
+            try:
+                from lib.telegram_sender import pin_chat_message
+                pin_chat_message(result, disable_notification=True)
+            except Exception as e:
+                print(f"[live_thread] re-pin failed: {e}")
             return True
     return False
 
