@@ -6,9 +6,12 @@ separate cron jobs on a 0.25 CPU / 256MB plan):
 
   1. refresh fixtures from ESPN, mark newly-live matches as active
   2. send pre-match analysis for fixtures starting soon
-  3. for each active (live) match: live score update, new goals/cards,
-     penalty shootout updates, delay/suspension alerts
-  4. send the final report for matches that just ended
+  3. update the Live Thread (single editable message with live score)
+  4. for each active (live) match: live score update, new goals/cards,
+     penalty shootout updates, delay/suspension alerts, special alerts
+     (hat-trick, comeback, star substitution)
+  5. send the final report for matches that just ended + close the
+     Live Thread + send end-of-match video highlights
 """
 import sys
 import os
@@ -29,6 +32,22 @@ def main():
 
         from scripts.prematch import main as prematch_main
         prematch_main()
+
+        # Update Live Thread for all active matches (before the per-match
+        # processing, so the score is current)
+        try:
+            from lib.live_thread import update_live_thread
+            from lib.api_client import FootballAPIClient
+            client = FootballAPIClient()
+            for event in client.get_live_fixtures():
+                match = client.parse_event(event)
+                if match['home_team']:
+                    try:
+                        update_live_thread(match)
+                    except Exception as e:
+                        print(f"Live thread update failed for {match['id']}: {e}")
+        except Exception as e:
+            print(f"Live thread batch failed: {e}")
 
         active_matches = get_active_matches()
         for match_id in active_matches:

@@ -27,7 +27,7 @@ import traceback
 sys.path.insert(0, os.path.dirname(__file__))
 
 from lib.telegram_sender import send_message, edit_message, answer_callback_query
-from lib.bot_menu import MAIN_MENU, BACK_TO_MENU, WELCOME_TEXT
+from lib.bot_menu import MAIN_MENU, BACK_TO_MENU, WELCOME_TEXT, CHAT_PROMPT
 from lib import bot_logic
 from lib import settings
 
@@ -42,12 +42,42 @@ HANDLERS = {
     "leaders": bot_logic.get_leaders_text,
 }
 
-# Shown immediately while the handler is working. Without this the user sees
-# the button's loading spinner stop (because we answerCallbackQuery right
-# away) but the message text doesn't change for 10-20s while we wait on
-# ESPN + the AI analysis endpoint, which feels broken. Editing the message
-# to a Persian "loading..." first makes the delay feel much shorter.
+# Shown immediately while the handler is working.
 LOADING_TEXT = "⏳ یک ثانیه، دارم اطلاعات رو از ESPN و تحلیل هوش مصنوعی می‌گیرم..."
+
+# Prefix that marks a text message as a chatbot question (set when the
+# user taps the 'chat' button). We can't store per-user state across
+# webhook calls easily, so we use Telegram's reply-to mechanism: when
+# the user taps 'chat', we send CHAT_PROMPT as a message; when they
+# reply to it, Telegram includes the reply-to-message id and we detect
+# it here. As a simpler fallback, we also accept any text that doesn't
+# match a command as a chatbot question.
+
+
+def _is_chat_reply(msg):
+    """Return True if this message is a reply to our CHAT_PROMPT."""
+    reply_to = msg.get("reply_to_message")
+    if not reply_to:
+        return False
+    reply_text = reply_to.get("text", "") or ""
+    return CHAT_PROMPT[:50] in reply_text
+
+
+def _handle_chat_question(chat_id, question):
+    """Send a user's question to the AI chatbot and reply with the answer."""
+    # Send a 'typing' indicator first
+    send_message("🤔 یه ثانیه، دارم فکر می‌کنم...", channel_id=chat_id)
+    try:
+        from lib.chatbot import answer_question
+        answer = answer_question(question)
+    except Exception as e:
+        print(f"[webhook] chatbot failed: {e}\n{traceback.format_exc()}")
+        answer = None
+    if not answer:
+        answer = (
+            "⚠️ متأسفم، الان نمی‌تونم جواب بدم. لطفاً چند لحظه‌ی دیگه دوباره امتحان کن."
+        )
+    send_message(answer, channel_id=chat_id, reply_markup=BACK_TO_MENU)
 
 
 def _handle_update(update):
@@ -57,23 +87,24 @@ def _handle_update(update):
         chat_id = cq["message"]["chat"]["id"]
         message_id = cq["message"]["message_id"]
 
-        # Stop the button's loading spinner right away; the actual
-        # answer (which may call the AI analysis endpoint and take a
-        # few seconds) is filled in below.
+        # Stop the button's loading spinner right away
         answer_callback_query(cq["id"])
 
         if data == "menu":
             edit_message(chat_id, message_id, WELCOME_TEXT, reply_markup=MAIN_MENU)
             return
 
+        # Chat button - send the prompt as a NEW message (so the user
+        # can reply to it with their question)
+        if data == "chat":
+            edit_message(chat_id, message_id, CHAT_PROMPT, reply_markup=BACK_TO_MENU)
+            return
+
         handler = HANDLERS.get(data)
         if not handler:
             return
 
-        # Show a loading placeholder immediately so the user knows the
-        # tap was registered. The handlers (especially "next") can take
-        # 5-15s because of the AI analysis endpoint - without this edit
-        # the message looks frozen.
+        # Show a loading placeholder immediately
         if data != "help":
             edit_message(chat_id, message_id, LOADING_TEXT, reply_markup=None)
 
@@ -93,11 +124,20 @@ def _handle_update(update):
 
         if text in ("/start", "/menu", "منو", "شروع"):
             send_message(WELCOME_TEXT, channel_id=chat_id, reply_markup=MAIN_MENU)
+        elif _is_chat_reply(msg):
+            # This is a reply to our CHAT_PROMPT - treat as chatbot question
+            _handle_chat_question(chat_id, text)
+        elif text.startswith("?") or text.startswith("سوال:"):
+            # Explicit question prefix
+            question = text.lstrip("?").lstrip("سوال:").strip()
+            if question:
+                _handle_chat_question(chat_id, question)
+            else:
+                send_message(CHAT_PROMPT, channel_id=chat_id)
         else:
-            send_message(
-                "برای شروع، /start رو بفرست یا از دکمه‌های زیر استفاده کن 👇",
-                channel_id=chat_id, reply_markup=MAIN_MENU,
-            )
+            # Default: treat any non-command text as a chatbot question
+            # (so the user can just type their question directly)
+            _handle_chat_question(chat_id, text)
         return
 
 
@@ -130,8 +170,6 @@ def application(environ, start_response):
 
 
 if __name__ == "__main__":
-    # Quick local smoke test: `python3 webhook.py` starts a dev server
-    # on :8000 so you can curl it before wiring it into alwaysdata.
     from wsgiref.simple_server import make_server
     port = int(os.environ.get("PORT", 8000))
     print(f"Serving webhook locally on http://127.0.0.1:{port}")

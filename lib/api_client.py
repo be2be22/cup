@@ -130,7 +130,7 @@ class FootballAPIClient:
         away = next((c for c in competitors if c.get('homeAway') == 'away'), {})
 
         details = comps.get('details', [])
-        goals, cards, penalties = [], [], []
+        goals, cards, penalties, substitutions = [], [], [], []
         for d in details:
             event_type = d.get('type', {}).get('text', '')
             team_id = d.get('team', {}).get('id', '')
@@ -159,6 +159,18 @@ class FootballAPIClient:
                 cards.append({
                     'team': team_name, 'player': player_name,
                     'minute': clock, 'detail': cd,
+                })
+            elif event_type == 'Substitution':
+                # Substitutions have 2 athletes: [out, in]
+                # ESPN text: "Substitution, Spain. Ferran Torres replaces Álex Baena."
+                # athletesInvolved: [ Torres (coming on), Baena (going off) ]
+                out_player = athletes[1].get('displayName', '?') if len(athletes) > 1 else '?'
+                in_player = athletes[0].get('displayName', '?') if athletes else '?'
+                substitutions.append({
+                    'team': team_name,
+                    'out': out_player,
+                    'in': in_player,
+                    'minute': clock,
                 })
 
         # Stage label - ESPN stores this in season.type.name (e.g.
@@ -198,6 +210,7 @@ class FootballAPIClient:
             'goals': goals,
             'cards': cards,
             'penalties': penalties,
+            'substitutions': substitutions,
             'minute': self._parse_clock(event.get('status', {}).get('displayClock', "0'")),
             'details': details,
             'teams_map': teams_map,

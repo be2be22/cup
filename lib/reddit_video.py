@@ -245,3 +245,131 @@ def fetch_reddit_goal_video(player_name, minute_str, home_team, away_team):
             return mp4_url, match.get('title', '')
 
     return None, None
+
+
+def _match_highlight_post(posts, home_team, away_team):
+    """Find a Reddit post that contains full match highlights.
+    r/soccer highlight posts have titles like:
+      - 'Highlights: Norway 1-2 England'
+      - 'Extended Highlights: Spain 2-1 Belgium'
+      - 'MATCH HIGHLIGHTS: Argentina vs Switzerland'
+    """
+    if not posts:
+        return None
+
+    home_norm = _normalize_player(home_team)
+    away_norm = _normalize_player(away_team)
+
+    best_match = None
+    best_score = 0
+    for post in posts:
+        title = post.get('title', '')
+        title_lower = title.lower()
+        title_norm = _normalize_player(title)
+
+        score = 0
+        # Look for 'highlights' or 'extended highlights' keyword
+        if 'highlight' in title_lower:
+            score += 10
+        # Look for both team names
+        if home_norm and home_norm in title_norm:
+            score += 5
+        if away_norm and away_norm in title_norm:
+            score += 5
+        # Look for a score pattern (e.g. '2-1')
+        if re.search(r'\b\d+\s*-\s*\d+\b', title):
+            score += 3
+
+        # Must have a v.redd.it link AND match the highlights keyword
+        if score > best_score and post.get('vreddit_id') and 'highlight' in title_lower:
+            best_score = score
+            best_match = post
+
+    return best_match if best_score >= 10 else None
+
+
+def fetch_reddit_highlight_video(home_team, away_team):
+    """Search r/soccer for a full match highlights clip and return the
+    direct .mp4 URL. Used by postmatch.py to send a highlights video
+    after a match ends.
+
+    Returns (url, title) or (None, None) if no highlights found.
+    """
+    # Try a few search queries
+    queries = [
+        f"Highlights {home_team} {away_team}",
+        f"{home_team} {away_team} highlights",
+        f"{home_team} {away_team}",
+    ]
+
+    for query in queries:
+        posts = _fetch_reddit_search(query, limit=15)
+        if not posts:
+            continue
+        match = _match_highlight_post(posts, home_team, away_team)
+        if match and match.get('vreddit_id'):
+            vreddit_id = match['vreddit_id']
+            mp4_url = _vreddit_mp4_url(vreddit_id)
+            print(f"[reddit_video] found highlights for {home_team} vs {away_team}: "
+                  f"v.redd.it/{vreddit_id}")
+            return mp4_url, match.get('title', '')
+
+    return None, None
+
+
+def fetch_reddit_key_moment_video(moment_type, player_name, minute_str, home_team, away_team):
+    """Search r/soccer for a key moment clip (save, red card, missed
+    penalty, etc.) and return the direct .mp4 URL.
+
+    moment_type: 'save', 'red card', 'missed penalty', 'free kick', etc.
+    Used by event_monitor.py to send videos of notable non-goal events.
+
+    Returns (url, title) or (None, None) if no clip found.
+    """
+    # r/soccer post titles for non-goal moments look like:
+    #   'Great save by Pickford (England) vs Norway 35''
+    #   'Red Card: Xhaka (Switzerland) vs Argentina 70''
+    # We search for the moment type + player/team
+    queries = [
+        f"{moment_type} {player_name}",
+        f"{player_name} {home_team} {away_team}",
+        f"{moment_type} {home_team} {away_team}",
+    ]
+
+    player_norm = _normalize_player(player_name)
+    last_name = player_norm.split()[-1] if player_norm else ''
+    moment_lower = moment_type.lower()
+
+    for query in queries:
+        posts = _fetch_reddit_search(query, limit=15)
+        if not posts:
+            continue
+
+        for post in posts:
+            title = post.get('title', '')
+            title_lower = title.lower()
+            title_norm = _normalize_player(title)
+
+            score = 0
+            # Match the moment type keyword
+            if moment_lower in title_lower:
+                score += 10
+            # Match player name
+            if last_name and last_name in title_norm:
+                score += 5
+            # Match teams
+            home_norm = _normalize_player(home_team)
+            away_norm = _normalize_player(away_team)
+            if home_norm and home_norm in title_norm:
+                score += 2
+            if away_norm and away_norm in title_norm:
+                score += 2
+
+            if score >= 10 and post.get('vreddit_id'):
+                vreddit_id = post['vreddit_id']
+                mp4_url = _vreddit_mp4_url(vreddit_id)
+                print(f"[reddit_video] found {moment_type} clip for {player_name}: "
+                      f"v.redd.it/{vreddit_id}")
+                return mp4_url, post.get('title', '')
+
+    return None, None

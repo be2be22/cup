@@ -3,10 +3,14 @@
 Penalty shootout monitor. Only does anything once a match's ESPN status
 is STATUS_PENALTY_SHOOTOUT.
 
-Note: ESPN's public scoreboard marks each penalty kick's `scoringPlay`
-as true/false but does not reliably distinguish "saved" from "missed
-wide", so we report those together as "not scored" - still useful, just
-slightly less detailed than a paid football-data API would give you.
+Reports each penalty kick with:
+  - Player name (in Persian, via AI translation if not in dict)
+  - Whether it was scored or missed/saved
+  - Running penalty score (home X - Y away)
+  - Kick number (e.g. "پنالتی #۵")
+
+When the shootout ends (3+ goal gap or 10+ kicks), sends a final
+"پایان پنالتی‌ها" message with the winner.
 """
 import sys
 import os
@@ -14,7 +18,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from lib.api_client import FootballAPIClient
-from lib.formatter import PersianFormatter
+from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA, get_flag, SEP
 from lib.telegram_sender import send_message
 from lib.state_manager import get_match_state, update_match_state
 
@@ -50,6 +54,8 @@ def main(match_id=None):
             if i < last_seen:
                 continue
 
+            # Use the formatter's format_penalty which already handles
+            # Persian translation via fa()
             send_message(fmt.format_penalty({
                 'team': p['team'], 'player': p['player'],
                 'result': 'scored' if p['scored'] else 'missed',
@@ -59,10 +65,8 @@ def main(match_id=None):
 
         update_match_state(str(match['id']), last_penalty_count=len(penalties))
 
-        # A shootout typically ends once one side has an unbeatable lead
-        # with equal (or fewer) kicks remaining for the other side, or
-        # after sudden death. We use a simple heuristic: 3+ goal gap, or
-        # 10+ total kicks taken, and only announce once.
+        # A shootout typically ends once one side has an unbeatable lead.
+        # We use a simple heuristic: 3+ goal gap, or 10+ total kicks taken.
         if not state.get('penalty_end_sent') and (
             abs(home_pen - away_pen) >= 3 or len(penalties) >= 10
         ):
