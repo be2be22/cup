@@ -1,5 +1,15 @@
 #!/usr/bin/env python3
-"""Checks live matches for new goals and cards since the last run."""
+"""Checks live matches for new goals and cards since the last run.
+
+Enhanced: when a new goal is detected, after sending the text goal
+message it also looks up ESPN's goal-clips (.mp4 direct URLs) and
+forwards the matching clip to the channel via sendVideo.
+
+The video lookup is retried across the next few cron runs (each run is
+~1 minute apart) because ESPN's clips typically appear 2-5 minutes
+after the goal is scored. We track the goal's video_sent state in
+state.json so we don't re-send the same clip.
+"""
 import sys
 import os
 
@@ -7,9 +17,10 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
 from datetime import datetime, timezone
 from lib.api_client import FootballAPIClient
-from lib.formatter import PersianFormatter
-from lib.telegram_sender import send_message
+from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA
+from lib.telegram_sender import send_message, send_video
 from lib.state_manager import get_match_state, update_match_state
+from lib.goal_video import fetch_goal_video_url
 
 
 def main(match_id=None):
@@ -26,7 +37,13 @@ def main(match_id=None):
 
         state = get_match_state(str(match['id']))
         last_events = state.get('last_events', [])
+        # Track which goals we've already sent the video for, so we
+        # can retry the video lookup on subsequent runs without
+        # re-sending the text message.
+        video_pending = state.get('video_pending', [])  # list of event_keys
+        video_sent = state.get('video_sent', [])  # list of event_keys
 
+        # 1. Send new goal/card text messages
         for g in match['goals']:
             event_key = f"goal_{g['player']}_{g['minute']}"
             if event_key not in last_events:
@@ -36,6 +53,9 @@ def main(match_id=None):
                     'home_team': match['home_team'], 'away_team': match['away_team'],
                 }))
                 last_events.append(event_key)
+                # Queue this goal for video lookup
+                if event_key not in video_pending and event_key not in video_sent:
+                    video_pending.append(event_key)
 
         for c in match['cards']:
             event_key = f"card_{c['player']}_{c['minute']}"
@@ -46,8 +66,60 @@ def main(match_id=None):
                 }))
                 last_events.append(event_key)
 
-        # Keep the list bounded so state.json doesn't grow forever.
-        update_match_state(str(match['id']), last_events=last_events[-100:])
+        # 2. Try to fetch and send videos for any pending goals
+        still_pending = []
+        for event_key in video_pending:
+            if event_key in video_sent:
+                continue
+            # Parse the player name back from the event_key
+            # Format: goal_{player}_{minute} - but player names can contain underscores
+            # so we need to be smarter. Try to find the matching goal in match['goals'].
+            player_name = None
+            minute_str = None
+            for g in match['goals']:
+                if f"goal_{g['player']}_{g['minute']}" == event_key:
+                    player_name = g['player']
+                    minute_str = g['minute']
+                    break
+
+            if not player_name:
+                # Goal is no longer in ESPN's data (very old) - give up
+                video_sent.append(event_key)
+                continue
+
+            # Try to find a video clip for this goal
+            video_url = fetch_goal_video_url(match['id'], player_name, g['team'])
+            if video_url:
+                # Send the video to the channel
+                player_fa = fa(player_name, PLAYER_FA)
+                team_fa = fa(g['team'], TEAM_FA)
+                caption = (
+                    f"🎬 ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
+                    f"📊 {fa(match['home_team'], TEAM_FA)} {match['home_score']} - "
+                    f"{match['away_score']} {fa(match['away_team'], TEAM_FA)}"
+                )
+                if send_video(video_url, caption=caption):
+                    video_sent.append(event_key)
+                    print(f"Video sent for goal: {player_name} ({minute_str})")
+                else:
+                    # Telegram rejected the video - give up
+                    video_sent.append(event_key)
+                    print(f"Video send failed for goal: {player_name} ({minute_str})")
+            else:
+                # No clip available yet - keep it pending for the next run
+                # But limit retries to ~10 minutes (10 cron runs at 1 min each)
+                # by tracking when the goal was first detected.
+                # For simplicity, we just keep it pending until found or
+                # until the match ends (postmatch.py clears active_matches).
+                still_pending.append(event_key)
+
+        # Update state
+        update_match_state(
+            str(match['id']),
+            last_events=last_events[-100:],
+            video_pending=still_pending,
+            video_sent=video_sent[-100:],
+        )
 
     print(f"Event check completed at {datetime.now(timezone.utc).isoformat()}")
 

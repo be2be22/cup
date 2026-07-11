@@ -100,6 +100,32 @@ def answer_callback_query(callback_query_id, text=None, show_alert=False):
     return bool(result and result.get("ok"))
 
 
+def send_video(video_url, caption=None, channel_id=None, parse_mode="Markdown"):
+    """Send a video by URL to the channel (or a specific chat).
+
+    Telegram downloads the video from `video_url` server-side and posts
+    it. We use this to forward ESPN's goal-clips (.mp4 direct URLs) to
+    the channel alongside the text goal message.
+
+    Falls back gracefully: if the URL is missing or Telegram rejects
+    it, returns False and the caller just skips the video post.
+    """
+    if channel_id is None:
+        channel_id = _default_channel_id()
+
+    payload = {
+        "chat_id": channel_id,
+        "video": video_url,
+        "disable_notification": False,
+    }
+    if caption:
+        payload["caption"] = caption
+        payload["parse_mode"] = parse_mode
+
+    result = _call("sendVideo", payload)
+    return bool(result and result.get("ok"))
+
+
 def set_webhook(url, secret_token=None):
     payload = {"url": url, "allowed_updates": ["message", "callback_query"]}
     if secret_token:
