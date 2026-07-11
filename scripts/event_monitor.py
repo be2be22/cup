@@ -21,6 +21,7 @@ from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA
 from lib.telegram_sender import send_message, send_video
 from lib.state_manager import get_match_state, update_match_state
 from lib.goal_video import fetch_goal_video_url
+from lib.reddit_video import fetch_reddit_goal_video
 
 
 def main(match_id=None):
@@ -87,20 +88,35 @@ def main(match_id=None):
                 video_sent.append(event_key)
                 continue
 
-            # Try to find a video clip for this goal
+            # Try to find a video clip for this goal.
+            # Order of preference:
+            #   1. ESPN goal clips (direct .mp4 from media.video-cdn.espn.com)
+            #   2. Reddit r/soccer v.redd.it clips (direct .mp4 from v.redd.it)
             video_url = fetch_goal_video_url(match['id'], player_name, g['team'])
+            video_source = 'ESPN'
+            if not video_url:
+                # Fallback: search r/soccer for a fan-posted clip
+                reddit_url, reddit_title = fetch_reddit_goal_video(
+                    player_name, minute_str,
+                    match['home_team'], match['away_team'],
+                )
+                if reddit_url:
+                    video_url = reddit_url
+                    video_source = 'Reddit'
+
             if video_url:
                 # Send the video to the channel
                 player_fa = fa(player_name, PLAYER_FA)
                 team_fa = fa(g['team'], TEAM_FA)
+                source_emoji = '📺' if video_source == 'ESPN' else '🎥'
                 caption = (
-                    f"🎬 ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
+                    f"{source_emoji} ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
                     f"📊 {fa(match['home_team'], TEAM_FA)} {match['home_score']} - "
                     f"{match['away_score']} {fa(match['away_team'], TEAM_FA)}"
                 )
                 if send_video(video_url, caption=caption):
                     video_sent.append(event_key)
-                    print(f"Video sent for goal: {player_name} ({minute_str})")
+                    print(f"Video sent for goal: {player_name} ({minute_str}) via {video_source}")
                 else:
                     # Telegram rejected the video - give up
                     video_sent.append(event_key)
