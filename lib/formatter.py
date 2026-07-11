@@ -4,18 +4,18 @@ SEP = "───────────────"
 
 FLAGS = {
     "France": "🇫🇷", "Morocco": "🇲🇦", "Iran": "🇮🇷", "USA": "🇺🇸",
-    "England": "🏴", "Brazil": "🇧🇷", "Argentina": "🇦🇷", "Germany": "🇩🇪",
+    "England": "🏴󠁧󠁢󠁥󠁮󠁧󠁿", "Brazil": "🇧🇷", "Argentina": "🇦🇷", "Germany": "🇩🇪",
     "Spain": "🇪🇸", "Portugal": "🇵🇹", "Italy": "🇮🇹", "Japan": "🇯🇵",
     "South Korea": "🇰🇷", "Mexico": "🇲🇽", "Canada": "🇨🇦",
     "Netherlands": "🇳🇱", "Belgium": "🇧🇪", "Croatia": "🇭🇷",
     "Senegal": "🇸🇳", "Ghana": "🇬🇭", "Cameroon": "🇨🇲", "Tunisia": "🇹🇳",
     "Saudi Arabia": "🇸🇦", "Australia": "🇦🇺", "Uruguay": "🇺🇾",
-    "Ecuador": "🇪🇨", "Qatar": "🇶🇦", "Wales": "🏴", "Poland": "🇵🇱",
+    "Ecuador": "🇪🇨", "Qatar": "🇶🇦", "Wales": "🏴󠁧󠁢󠁷󠁬󠁳󠁿", "Poland": "🇵🇱",
     "Serbia": "🇷🇸", "Switzerland": "🇨🇭", "Denmark": "🇩🇰",
     "Nigeria": "🇳🇬", "Egypt": "🇪🇬",
     # Extra teams that may show up in 2026 knockout stage:
     "Norway": "🇳🇴", "Sweden": "🇸🇪", "Austria": "🇦🇹", "Turkey": "🇹🇷",
-    "Ukraine": "🇺🇦", "Scotland": "🏴", "Ireland": "🇮🇪",
+    "Ukraine": "🇺🇦", "Scotland": "🏴󠁧󠁢󠁳󠁣󠁴󠁿", "Ireland": "🇮🇪",
     "Colombia": "🇨🇴", "Peru": "🇵🇪", "Chile": "🇨🇱", "Paraguay": "🇵🇾",
     "Costa Rica": "🇨🇷", "Panama": "🇵🇦", "Honduras": "🇭🇳",
     "South Africa": "🇿🇦", "Ivory Coast": "🇨🇮", "Mali": "🇲🇱",
@@ -66,7 +66,22 @@ def get_flag(t):
 
 
 def fa(t, mapping):
-    return mapping.get(t, t)
+    """Look up `t` in `mapping` and return the Persian translation.
+    Falls back to the original string if not found.
+
+    For PLAYER_FA specifically, if the name isn't in the static dict,
+    we ask the AI to translate it on-the-fly and cache the result.
+    """
+    if t in mapping:
+        return mapping[t]
+    # If this is a player name lookup (mapping is PLAYER_FA), try AI translation
+    if mapping is PLAYER_FA and t:
+        try:
+            from lib.player_translator import translate_player_name
+            return translate_player_name(t)
+        except Exception:
+            pass
+    return t
 
 
 def to_jalali(gs):

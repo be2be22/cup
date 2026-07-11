@@ -5,3 +5,5 @@ __pycache__/
 local_settings.py
 # state.json is runtime state written by the cron monitor - never commit
 state.json
+# player_translations.json is the AI-generated Persian name cache - runtime only
+player_translations.json
