@@ -104,8 +104,14 @@ def send_video(video_url, caption=None, channel_id=None, parse_mode="Markdown"):
     """Send a video by URL to the channel (or a specific chat).
 
     Telegram downloads the video from `video_url` server-side and posts
-    it. We use this to forward ESPN's goal-clips (.mp4 direct URLs) to
-    the channel alongside the text goal message.
+    it. We use this to forward Reddit's v.redd.it goal-clips (.mp4
+    direct URLs) to the channel alongside the text goal message.
+
+    IMPORTANT: No video data is ever stored on our server's disk. We
+    only pass the URL string to Telegram's sendVideo API, which causes
+    Telegram's servers to download the video directly from v.redd.it
+    and store it on Telegram's own CDN. Once sendVideo returns, we
+    drop the URL and keep no local copy.
 
     Falls back gracefully: if the URL is missing or Telegram rejects
     it, returns False and the caller just skips the video post.

@@ -1,14 +1,20 @@
 #!/usr/bin/env python3
 """Checks live matches for new goals and cards since the last run.
 
-Enhanced: when a new goal is detected, after sending the text goal
-message it also looks up ESPN's goal-clips (.mp4 direct URLs) and
-forwards the matching clip to the channel via sendVideo.
+When a new goal is detected, after sending the text goal message it
+also searches r/soccer for a fan-posted v.redd.it clip and forwards
+the matching .mp4 URL to the channel via Telegram's sendVideo.
+
+Important: NO video data is ever stored on the server's disk. We only
+ever hold the .mp4 URL string in memory and pass it to Telegram's
+sendVideo API, which causes Telegram's servers to download the video
+directly from v.redd.it. Once sendVideo returns, we drop the URL and
+keep only the event_key string ('goal_<player>_<minute>') in
+state.json so we don't re-send the same clip.
 
 The video lookup is retried across the next few cron runs (each run is
-~1 minute apart) because ESPN's clips typically appear 2-5 minutes
-after the goal is scored. We track the goal's video_sent state in
-state.json so we don't re-send the same clip.
+~1 minute apart) because Reddit posts typically appear 1-3 minutes
+after the goal is scored.
 """
 import sys
 import os
@@ -20,7 +26,6 @@ from lib.api_client import FootballAPIClient
 from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA
 from lib.telegram_sender import send_message, send_video
 from lib.state_manager import get_match_state, update_match_state
-from lib.goal_video import fetch_goal_video_url
 from lib.reddit_video import fetch_reddit_goal_video
 
 
@@ -41,8 +46,10 @@ def main(match_id=None):
         # Track which goals we've already sent the video for, so we
         # can retry the video lookup on subsequent runs without
         # re-sending the text message.
-        video_pending = state.get('video_pending', [])  # list of event_keys
-        video_sent = state.get('video_sent', [])  # list of event_keys
+        # NOTE: these lists only contain short string keys like
+        # 'goal_Haaland_36' - never video data or URLs.
+        video_pending = state.get('video_pending', [])
+        video_sent = state.get('video_sent', [])
 
         # 1. Send new goal/card text messages
         for g in match['goals']:
@@ -67,20 +74,24 @@ def main(match_id=None):
                 }))
                 last_events.append(event_key)
 
-        # 2. Try to fetch and send videos for any pending goals
+        # 2. Try to fetch and send videos for any pending goals.
+        # Only Reddit is used as a source now - it provides actual
+        # goal replay clips via v.redd.it, whereas ESPN's clips were
+        # mostly fan-reaction / studio analysis clips.
         still_pending = []
         for event_key in video_pending:
             if event_key in video_sent:
                 continue
-            # Parse the player name back from the event_key
-            # Format: goal_{player}_{minute} - but player names can contain underscores
-            # so we need to be smarter. Try to find the matching goal in match['goals'].
+            # Find the matching goal in match['goals'] to get the
+            # player name, minute, and team.
             player_name = None
             minute_str = None
+            goal_team = None
             for g in match['goals']:
                 if f"goal_{g['player']}_{g['minute']}" == event_key:
                     player_name = g['player']
                     minute_str = g['minute']
+                    goal_team = g['team']
                     break
 
             if not player_name:
@@ -88,53 +99,44 @@ def main(match_id=None):
                 video_sent.append(event_key)
                 continue
 
-            # Try to find a video clip for this goal.
-            # Order of preference:
-            #   1. ESPN goal clips (direct .mp4 from media.video-cdn.espn.com)
-            #   2. Reddit r/soccer v.redd.it clips (direct .mp4 from v.redd.it)
-            video_url = fetch_goal_video_url(match['id'], player_name, g['team'])
-            video_source = 'ESPN'
-            if not video_url:
-                # Fallback: search r/soccer for a fan-posted clip
-                reddit_url, reddit_title = fetch_reddit_goal_video(
-                    player_name, minute_str,
-                    match['home_team'], match['away_team'],
-                )
-                if reddit_url:
-                    video_url = reddit_url
-                    video_source = 'Reddit'
+            # Search r/soccer for a fan-posted v.redd.it clip.
+            # This returns a direct .mp4 URL that Telegram downloads
+            # server-side. We never download the video ourselves.
+            video_url, video_title = fetch_reddit_goal_video(
+                player_name, minute_str,
+                match['home_team'], match['away_team'],
+            )
 
             if video_url:
-                # Send the video to the channel
+                # Pass the URL to Telegram's sendVideo. Telegram's
+                # servers download the video from v.redd.it and store
+                # it on Telegram's own CDN. We don't keep any copy.
                 player_fa = fa(player_name, PLAYER_FA)
-                team_fa = fa(g['team'], TEAM_FA)
-                source_emoji = '📺' if video_source == 'ESPN' else '🎥'
+                team_fa = fa(goal_team, TEAM_FA)
                 caption = (
-                    f"{source_emoji} ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
+                    f"🎥 ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
                     f"📊 {fa(match['home_team'], TEAM_FA)} {match['home_score']} - "
                     f"{match['away_score']} {fa(match['away_team'], TEAM_FA)}"
                 )
                 if send_video(video_url, caption=caption):
                     video_sent.append(event_key)
-                    print(f"Video sent for goal: {player_name} ({minute_str}) via {video_source}")
+                    print(f"Video sent for goal: {player_name} ({minute_str}) via Reddit")
                 else:
                     # Telegram rejected the video - give up
                     video_sent.append(event_key)
                     print(f"Video send failed for goal: {player_name} ({minute_str})")
             else:
                 # No clip available yet - keep it pending for the next run
-                # But limit retries to ~10 minutes (10 cron runs at 1 min each)
-                # by tracking when the goal was first detected.
-                # For simplicity, we just keep it pending until found or
-                # until the match ends (postmatch.py clears active_matches).
                 still_pending.append(event_key)
 
-        # Update state
+        # Update state. We only keep short string keys, never video data.
+        # Also cap the video_sent list to the last 50 entries so state.json
+        # doesn't grow forever as the tournament progresses.
         update_match_state(
             str(match['id']),
             last_events=last_events[-100:],
             video_pending=still_pending,
-            video_sent=video_sent[-100:],
+            video_sent=video_sent[-50:],
         )
 
     print(f"Event check completed at {datetime.now(timezone.utc).isoformat()}")
