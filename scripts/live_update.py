@@ -94,6 +94,11 @@ def _is_overtime(match):
     return match.get('status') == 'STATUS_OVERTIME'
 
 
+def _is_penalty_shootout(match):
+    """Return True if the match is in penalty shootout (after overtime)."""
+    return match.get('status') == 'STATUS_PENALTY_SHOOTOUT'
+
+
 def _is_second_half_start(match, state):
     """Return True if we just transitioned from halftime to second half."""
     if match.get('status') != 'STATUS_SECOND_HALF':
@@ -106,6 +111,29 @@ def _is_overtime_start(match, state):
     if not _is_overtime(match):
         return False
     return state.get('end_regulation_sent', False)
+
+
+def _is_overtime_halftime(match, state):
+    """Return True if we're at halftime of overtime (between 105' and 106')."""
+    # ESPN may report STATUS_END_PERIOD during the brief break between
+    # the two halves of overtime, but the clock would be around 105'.
+    if match.get('status') != 'STATUS_END_PERIOD':
+        return False
+    clock = match.get('clock', '')
+    try:
+        minute = int(clock.split("'")[0].split("+")[0])
+        return minute >= 105
+    except Exception:
+        return False
+
+
+def _is_penalty_start(match, state):
+    """Return True if we just transitioned from overtime to penalties."""
+    if not _is_penalty_shootout(match):
+        return False
+    # We detect this is a transition if we were previously in overtime
+    # or end-of-overtime, tracked by the 'overtime_announced' flag.
+    return state.get('overtime_announced', False) or state.get('end_overtime_sent', False)
 
 
 def _send_halftime_summary(match, events_text, score_str):
@@ -208,8 +236,32 @@ def main(match_id=None):
 
         # ============================================================
         # END OF REGULATION (90') - send one summary, wait for overtime
+        # Also handles END_PERIOD during overtime halftime (at ~105')
         # ============================================================
         if _is_end_of_regulation(match):
+            # Check if this is overtime halftime (at ~105')
+            if _is_overtime_halftime(match, state):
+                if state.get('overtime_halftime_sent', False):
+                    if current_clock != last_clock_str:
+                        update_match_state(str(match['id']), last_clock_str=current_clock)
+                    continue
+                # Send overtime halftime summary
+                header = fmt.format_live_update({
+                    'home_team': match['home_team'], 'away_team': match['away_team'],
+                    'home_score': match['home_score'], 'away_score': match['away_score'],
+                    'clock': current_clock,
+                    'status': match['status'],
+                }, events_text)
+                msg = f"{header}\n\n⏸️ *پایان نیمه‌ی اول وقت اضافه* — منتظر شروع نیمه‌ی دوم وقت اضافه..."
+                if send_message(msg):
+                    update_match_state(
+                        str(match['id']),
+                        last_clock_str=current_clock,
+                        overtime_halftime_sent=True,
+                    )
+                continue
+
+            # Regular end-of-regulation (at 90')
             if end_regulation_sent:
                 if current_clock != last_clock_str:
                     update_match_state(str(match['id']), last_clock_str=current_clock)
@@ -251,14 +303,63 @@ def main(match_id=None):
                 'clock': current_clock,
                 'status': match['status'],
             }, events_text)
-            msg = f"{header}\n\n⚡ *وقت اضافه شروع شد!*"
+            msg = f"{header}\n\n⚡ *وقت اضافه شروع شد!*\n⏱️ ۳۰ دقیقه وقت اضافه (۲ نیمه‌ی ۱۵ دقیقه‌ای) — برنده هنوز مشخص نشده!"
             if send_message(msg):
                 update_match_state(
                     str(match['id']),
                     last_clock_str=current_clock,
                     end_regulation_sent=False,
+                    overtime_announced=True,
                 )
             continue
+
+        # ============================================================
+        # OVERTIME SECOND HALF START - clear overtime_halftime flag
+        # ============================================================
+        if _is_overtime(match) and state.get('overtime_halftime_sent', False):
+            header = fmt.format_live_update({
+                'home_team': match['home_team'], 'away_team': match['away_team'],
+                'home_score': match['home_score'], 'away_score': match['away_score'],
+                'clock': current_clock,
+                'status': match['status'],
+            }, events_text)
+            msg = f"{header}\n\n▶️ *نیمه‌ی دوم وقت اضافه شروع شد!*"
+            if send_message(msg):
+                update_match_state(
+                    str(match['id']),
+                    last_clock_str=current_clock,
+                    overtime_halftime_sent=False,
+                )
+            continue
+
+        # ============================================================
+        # PENALTY SHOOTOUT START - announce transition from overtime
+        # ============================================================
+        if _is_penalty_shootout(match):
+            # Check if this is the first time we see penalties (transition)
+            if not state.get('penalties_announced', False):
+                header = fmt.format_live_update({
+                    'home_team': match['home_team'], 'away_team': match['away_team'],
+                    'home_score': match['home_score'], 'away_score': match['away_score'],
+                    'clock': current_clock,
+                    'status': match['status'],
+                }, events_text)
+                msg = (
+                    f"{header}\n\n😱 *بازی به ضربات پنالتی رفت!*"
+                    f"\n⚽ وقت اضافه هم برنده‌ای مشخص نکرد — حالا ضربات پنالتی!"
+                )
+                if send_message(msg):
+                    update_match_state(
+                        str(match['id']),
+                        last_clock_str=current_clock,
+                        penalties_announced=True,
+                    )
+                continue
+            else:
+                # Already announced - penalty_monitor.py handles per-kick reports
+                if current_clock != last_clock_str:
+                    update_match_state(str(match['id']), last_clock_str=current_clock)
+                continue
 
         # ============================================================
         # NORMAL LIVE COMMENTARY (any period in progress)

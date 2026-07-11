@@ -40,6 +40,11 @@ HANDLERS = {
     "form": bot_logic.get_form_text,
     "h2h": bot_logic.get_h2h_text,
     "leaders": bot_logic.get_leaders_text,
+    "standings": bot_logic.get_standings_text,
+    "bracket": bot_logic.get_bracket_text,
+    "scorers": bot_logic.get_top_scorers_text,  # goals
+    "assists": lambda: bot_logic.get_top_scorers_text(stat='assists'),
+    "lineups": bot_logic.get_lineups_text,
 }
 
 # Shown immediately while the handler is working.
