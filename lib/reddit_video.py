@@ -184,30 +184,41 @@ def _match_goal_post(posts, player_name, minute_str, home_team, away_team):
         title_norm = _normalize_player(title)
 
         score = 0
+        has_player = False
+        has_minute = False
+
         # Player name match (most important signal)
         if last_name and last_name in title_norm:
             score += 10
+            has_player = True
         if player_norm and player_norm in title_norm:
             score += 5
-        # Minute match
+            has_player = True
+        # Minute match - CRITICAL for avoiding wrong videos
+        # r/soccer goal posts always include the minute, e.g. "Schjelderup 36'"
         if minute_clean and minute_clean in title:
-            score += 5
+            score += 8
+            has_minute = True
         # Score pattern (e.g. "1-0" or "1 - 0")
         if re.search(r'\b\d+\s*-\s*\d+\b', title):
-            score += 2
+            score += 3
         # Team names match
         home_norm = _normalize_player(home_team)
         away_norm = _normalize_player(away_team)
         if home_norm and home_norm in title_norm:
-            score += 2
+            score += 3
         if away_norm and away_norm in title_norm:
-            score += 2
+            score += 3
         # 'Goal' keyword
         if 'goal' in title_lower or 'score' in title_lower:
             score += 1
 
-        # Must have a v.redd.it link AND match the scorer's last name
-        if score > best_score and post.get('vreddit_id') and score >= 10:
+        # Must have a v.redd.it link AND match the scorer's last name.
+        # CRITICAL FIX: also require the minute to match (has_minute=True)
+        # to prevent finding OLD videos about the same player from
+        # previous matches. Without this, a search for "Bellingham 45'"
+        # could match an old "Bellingham 30'" post from a previous game.
+        if score > best_score and post.get('vreddit_id') and has_player and has_minute:
             best_score = score
             best_match = post
 

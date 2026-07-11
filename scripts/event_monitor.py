@@ -125,6 +125,15 @@ def main(match_id=None):
                     pass
 
         # 3. Try to fetch and send videos for any pending goals (Reddit only)
+        # IMPORTANT: We wait at least 90 seconds after a goal is detected
+        # before searching Reddit, because r/soccer posts typically take
+        # 1-3 minutes to appear. Searching immediately finds wrong/old
+        # videos that happen to match the player name.
+        import time as _time
+        now_ts = _time.time()
+        # Track when each goal was first detected (for the delay)
+        goal_detect_times = state.get('goal_detect_times', {}) or {}
+
         still_pending = []
         for event_key in video_pending:
             if event_key in video_sent:
@@ -141,6 +150,17 @@ def main(match_id=None):
 
             if not player_name:
                 video_sent.append(event_key)
+                continue
+
+            # Record when this goal was first detected
+            if event_key not in goal_detect_times:
+                goal_detect_times[event_key] = now_ts
+
+            # Wait at least 90 seconds before the first search attempt
+            seconds_since_goal = now_ts - goal_detect_times[event_key]
+            if seconds_since_goal < 90:
+                print(f"[event_monitor] goal {event_key}: waiting {90-seconds_since_goal:.0f}s before Reddit search")
+                still_pending.append(event_key)
                 continue
 
             video_url, video_title = fetch_reddit_goal_video(
@@ -165,13 +185,15 @@ def main(match_id=None):
             else:
                 still_pending.append(event_key)
 
-        # Update state
+        # Update state - also save goal_detect_times so the 90s delay
+        # persists across cron runs (each cron run is ~1 min apart).
         update_match_state(
             str(match['id']),
             last_events=last_events[-100:],
             video_pending=still_pending,
             video_sent=video_sent[-50:],
             last_subs=last_subs[-50:],
+            goal_detect_times=goal_detect_times,
         )
 
     print(f"Event check completed at {datetime.now(timezone.utc).isoformat()}")
