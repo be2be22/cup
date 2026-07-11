@@ -246,3 +246,48 @@ def generate_match_pulse(
     )
 
     return _call_ai(prompt, timeout=15)
+
+
+def generate_halftime_summary(event_id, home_team, away_team, score_str=""):
+    """Generate a Persian summary of the FIRST HALF only, to be sent
+    once when the match goes to halftime.
+
+    IMPORTANT: this is called when ESPN reports STATUS_HALFTIME. The
+    commentary feed at this point only contains first-half events, so
+    the AI summarizes what actually happened in the first 45+ minutes.
+    We explicitly tell the AI NOT to invent or predict second-half
+    events - just summarize the first half and stop.
+
+    Returns the text, or None on any failure.
+    """
+    entries, teams_stats = _fetch_commentary(event_id)
+    if not entries and not teams_stats:
+        return None
+
+    # Use ALL commentary entries from the first half (don't truncate)
+    english_block = _translate_commentary_entries(entries, last_n=30) or '(هیچ اتفاق خاصی ثبت نشده)'
+    stats_block = _format_stats_brief(teams_stats, home_team, away_team) or '(آمار در دسترس نیست)'
+
+    hf = fa(home_team, TEAM_FA)
+    af = fa(away_team, TEAM_FA)
+
+    prompt = (
+        f"تو یه گزارشگر فوتبال فارسی‌زبان هستی. نیمه‌ی اول بازی "
+        f"{hf} مقابل {af} تو جام جهانی ۲۰۲۶ تموم شده و الان استراحته."
+        + (f" نتیجه‌ی نیمه‌ی اول: {score_str}." if score_str else "")
+        + "\n\nآمار نیمه‌ی اول:\n"
+        f"{stats_block}\n\n"
+        "اتفاقات نیمه‌ی اول (به ترتیب زمانی):\n"
+        f"{english_block}\n\n"
+        "یک خلاصه‌ی کوتاه (۳ تا ۵ خط) به فارسی بنویس که شامل این موارد باشه:\n"
+        "۱. روند کلی نیمه‌ی اول (کدوم تیم دست بالاتر بود)\n"
+        "۲. گل‌ها و موقعیت‌های کلیدی\n"
+        "۳. تحلیل کوتاه آمار (تسلط توپ، شوت‌ها)\n"
+        "\n⚠️ مهم: فقط درباره‌ی نیمه‌ی اول حرف بزن. هیچ‌چیز درباره‌ی نیمه‌ی دوم "
+        "نگو، هیچ پیش‌بینی نکن، هیچ اتفاقی رو اختراع نکن. فقط چیزی که تو "
+        "داده‌های بالا هست رو خلاصه کن.\n"
+        "از اموجی مناسب (⚽📊🔥) استفاده کن. مختصر و حرفه‌ای باشه. "
+        "فقط خود خلاصه رو بنویس، بدون مقدمه."
+    )
+
+    return _call_ai(prompt, timeout=15)
