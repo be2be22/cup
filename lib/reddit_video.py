@@ -330,17 +330,20 @@ def fetch_reddit_highlight_video(home_team, away_team):
 
 def fetch_reddit_key_moment_video(moment_type, player_name, minute_str, home_team, away_team):
     """Search r/soccer for a key moment clip (save, red card, missed
-    penalty, etc.) and return the direct .mp4 URL.
+    penalty, VAR decision, etc.) and return the direct .mp4 URL.
 
-    moment_type: 'save', 'red card', 'missed penalty', 'free kick', etc.
+    moment_type: 'save', 'red card', 'VAR', 'missed penalty', 'free kick', etc.
     Used by event_monitor.py to send videos of notable non-goal events.
 
     Returns (url, title) or (None, None) if no clip found.
+
+    CRITICAL: requires the minute to match in the post title (same fix
+    as goal videos) to prevent finding old/wrong clips.
     """
     # r/soccer post titles for non-goal moments look like:
     #   'Great save by Pickford (England) vs Norway 35''
     #   'Red Card: Xhaka (Switzerland) vs Argentina 70''
-    # We search for the moment type + player/team
+    #   'England penalty overturned by VAR 103''
     queries = [
         f"{moment_type} {player_name}",
         f"{player_name} {home_team} {away_team}",
@@ -350,6 +353,8 @@ def fetch_reddit_key_moment_video(moment_type, player_name, minute_str, home_tea
     player_norm = _normalize_player(player_name)
     last_name = player_norm.split()[-1] if player_norm else ''
     moment_lower = moment_type.lower()
+    # Normalize minute (e.g., "103'" -> "103", "45'+2'" -> "452")
+    minute_clean = re.sub(r"[^\d+]", '', minute_str or '')
 
     for query in queries:
         posts = _fetch_reddit_search(query, limit=15)
@@ -362,21 +367,31 @@ def fetch_reddit_key_moment_video(moment_type, player_name, minute_str, home_tea
             title_norm = _normalize_player(title)
 
             score = 0
+            has_moment = False
+            has_minute = False
+
             # Match the moment type keyword
             if moment_lower in title_lower:
                 score += 10
-            # Match player name
+                has_moment = True
+            # Match player name (or team name for VAR events)
             if last_name and last_name in title_norm:
                 score += 5
+            # Match minute - CRITICAL for avoiding wrong videos
+            if minute_clean and minute_clean in title:
+                score += 8
+                has_minute = True
             # Match teams
             home_norm = _normalize_player(home_team)
             away_norm = _normalize_player(away_team)
             if home_norm and home_norm in title_norm:
-                score += 2
+                score += 3
             if away_norm and away_norm in title_norm:
-                score += 2
+                score += 3
 
-            if score >= 10 and post.get('vreddit_id'):
+            # Must have the moment type AND the minute in the title
+            # (same strict matching as goal videos)
+            if score >= 10 and post.get('vreddit_id') and has_moment and has_minute:
                 vreddit_id = post['vreddit_id']
                 mp4_url = _vreddit_mp4_url(vreddit_id)
                 print(f"[reddit_video] found {moment_type} clip for {player_name}: "

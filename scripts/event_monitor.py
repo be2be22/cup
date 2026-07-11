@@ -31,6 +31,7 @@ from lib.special_alerts import (
     check_star_substitution,
 )
 from lib.stoppage_alert import check_stoppage_announcement
+from lib.var_events import check_var_events, process_pending_var_videos
 
 
 def build_events_text(match):
@@ -69,6 +70,17 @@ def main(match_id=None):
             check_stoppage_announcement(match)
         except Exception as e:
             print(f"[event_monitor] stoppage alert failed: {e}")
+
+        # Check for VAR events (goal overturned, penalty denied, etc.)
+        # and process any pending VAR video searches
+        try:
+            check_var_events(match)
+        except Exception as e:
+            print(f"[event_monitor] VAR event check failed: {e}")
+        try:
+            process_pending_var_videos(match)
+        except Exception as e:
+            print(f"[event_monitor] VAR video processing failed: {e}")
 
         # 1. Send new goal/card text messages + check hat-trick
         for g in match['goals']:
