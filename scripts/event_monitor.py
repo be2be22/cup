@@ -31,6 +31,7 @@ from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA
 from lib.telegram_sender import send_message, send_video
 from lib.state_manager import get_match_state, update_match_state
 from lib.reddit_video import fetch_reddit_goal_video, fetch_reddit_key_moment_video
+from lib.varzesh3_goal import fetch_varzesh3_goal_video, fetch_varzesh3_key_moment
 from lib.special_alerts import (
     check_hat_trick,
     check_comeback,
@@ -146,19 +147,28 @@ def main(match_id=None):
                     'minute': c['minute'], 'detail': c['detail'],
                 }))
                 last_events.append(event_key)
-                # For red cards, try to find a video clip on Reddit
+                # For red cards, try to find a video clip
                 if 'قرمز' in c['detail']:
                     try:
-                        video_url, _ = fetch_reddit_key_moment_video(
-                            'red card', c['player'], c['minute'],
+                        # Try varzesh3 first, then Reddit
+                        v3_url, v3_page, _ = fetch_varzesh3_key_moment(
+                            'کارت قرمز', c['player'], c['team'], c['minute'],
                             match['home_team'], match['away_team'],
                         )
+                        video_url = v3_url
+                        source = 'ورزش سه'
+                        if not video_url:
+                            video_url, _ = fetch_reddit_key_moment_video(
+                                'red card', c['player'], c['minute'],
+                                match['home_team'], match['away_team'],
+                            )
+                            source = 'Reddit'
                         if video_url:
                             player_fa = fa(c['player'], PLAYER_FA)
                             team_fa = fa(c['team'], TEAM_FA)
                             caption = (
                                 f"🔴 ویدیوی کارت قرمزِ {player_fa} ({team_fa}) - دقیقه {c['minute']}\n"
-                                f"📎 منبع: Reddit r/soccer"
+                                f"📎 منبع: {source}"
                             )
                             send_video(video_url, caption=caption)
                     except Exception as e:
@@ -241,31 +251,59 @@ def main(match_id=None):
 
             videos_searched_this_run += 1
 
-            # Search Reddit for the goal video
-            search_player = player_name or goal_team
-            try:
-                video_url, video_title = fetch_reddit_goal_video(
-                    search_player, minute_str or '',
-                    match['home_team'], match['away_team'],
-                )
-            except Exception as e:
-                if '429' in str(e):
-                    print(f"[event_monitor] Reddit 429 rate limited, skipping video search")
-                    video_url = None
-                else:
-                    raise
+            # Search for the goal video.
+            # 1. Try varzesh3.com FIRST (Iranian source, no rate limits,
+            #    Persian titles with player names, fast)
+            # 2. Fall back to Reddit r/soccer if varzesh3 doesn't have it
+            video_url = None
+            video_source = None
+            video_page_url = None
+
+            if player_name:
+                try:
+                    v3_url, v3_page, v3_title = fetch_varzesh3_goal_video(
+                        player_name, goal_team, minute_str,
+                        match['home_team'], match['away_team'],
+                    )
+                    if v3_url:
+                        video_url = v3_url
+                        video_page_url = v3_page
+                        video_source = 'ورزش سه'
+                except Exception as e:
+                    print(f"[event_monitor] varzesh3 goal search failed: {e}")
+
+            # Fallback: Reddit
+            if not video_url:
+                search_player = player_name or goal_team
+                try:
+                    reddit_url, reddit_title = fetch_reddit_goal_video(
+                        search_player, minute_str or '',
+                        match['home_team'], match['away_team'],
+                    )
+                    if reddit_url:
+                        video_url = reddit_url
+                        video_source = 'Reddit'
+                except Exception as e:
+                    if '429' in str(e):
+                        print(f"[event_monitor] Reddit 429, skipping")
+                    else:
+                        print(f"[event_monitor] Reddit error: {e}")
 
             if video_url:
                 player_fa = fa(player_name, PLAYER_FA) if player_name else goal_team
                 team_fa = fa(goal_team, TEAM_FA)
+                source_line = f"📎 منبع: {video_source}"
+                if video_page_url and video_source == 'ورزش سه':
+                    source_line = f"📎 منبع: [ورزش سه]({video_page_url})"
                 caption = (
                     f"🎥 ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
                     f"📊 {fa(match['home_team'], TEAM_FA)} {match['home_score']} - "
-                    f"{match['away_score']} {fa(match['away_team'], TEAM_FA)}"
+                    f"{match['away_score']} {fa(match['away_team'], TEAM_FA)}\n"
+                    f"{source_line}"
                 )
                 if send_video(video_url, caption=caption):
                     video_sent.append(event_key)
-                    print(f"[event_monitor] video sent: {event_key}")
+                    print(f"[event_monitor] video sent: {event_key} via {video_source}")
                 else:
                     video_sent.append(event_key)
                     print(f"[event_monitor] video failed: {event_key}")
