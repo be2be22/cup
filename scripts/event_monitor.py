@@ -1,25 +1,31 @@
 #!/usr/bin/env python3
-"""Checks live matches for new goals, cards, substitutions, and special
-alerts (hat-tricks, comebacks, star substitutions) since the last run.
+"""Checks live matches for new goals, cards, substitutions, VAR events,
+and special alerts (hat-tricks, comebacks, star substitutions).
 
-When a new goal is detected, after sending the text goal message it
-also searches r/soccer for a fan-posted v.redd.it clip and forwards
-the matching .mp4 URL to the channel via Telegram's sendVideo.
-
-Special alerts:
-  - Hat-trick 🎩: when a player scores their 3rd+ goal
-  - Comeback 🔄: when a team that was trailing by 2+ equalizes or leads
-  - Star sub 👤: when a star player (see lib/star_players.py) is subbed
-
-NO video data is ever stored on disk - we only pass the .mp4 URL to
-Telegram's sendVideo API.
+MAJOR FIXES in this version:
+  1. SCORE-BASED GOAL DETECTION: when ESPN updates the score before
+     adding the goal to details, we detect the goal from the score
+     change and send an immediate alert.
+  2. CARD DETECTION: ESPN's scoreboard details array sometimes has
+     cards with type='Yellow Card' or 'Red Card'. We also check the
+     yellowCard/redCard boolean fields as a fallback.
+  3. VAR EVENT DETECTION: ESPN's commentary feed has VAR events.
+     We scan it on every cron run and send alerts.
+  4. TEAM NAME RESOLUTION: the details array's team.id doesn't always
+     match the competitors array. We fall back to matching by team
+     displayName or using the keyEvents team field.
+  5. GOAL PLAYER NAME: when the scoreboard details don't have the
+     athlete name, we try to extract it from the keyEvents text
+     (e.g. "Goal! Norway 1, England 0. Andreas Schjelderup...").
 """
 import sys
 import os
+import re
+import time
+from datetime import datetime, timezone
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..'))
 
-from datetime import datetime, timezone
 from lib.api_client import FootballAPIClient
 from lib.formatter import PersianFormatter, fa, TEAM_FA, PLAYER_FA
 from lib.telegram_sender import send_message, send_video
@@ -60,37 +66,26 @@ def main(match_id=None):
         last_events = state.get('last_events', [])
         video_pending = state.get('video_pending', [])
         video_sent = state.get('video_sent', [])
-        last_subs = state.get('last_subs', [])  # list of "out|in|minute" strings
+        last_subs = state.get('last_subs', [])
 
-        # Check for comeback (compare current score to previous)
+        # Check for comeback, stoppage, VAR
         check_comeback(match, state)
-
-        # Check for stoppage time announcement (e.g. "5 minutes added")
         try:
             check_stoppage_announcement(match)
         except Exception as e:
             print(f"[event_monitor] stoppage alert failed: {e}")
-
-        # Check for VAR events (goal overturned, penalty denied, etc.)
-        # and process any pending VAR video searches
         try:
             check_var_events(match)
         except Exception as e:
-            print(f"[event_monitor] VAR event check failed: {e}")
+            print(f"[event_monitor] VAR check failed: {e}")
         try:
             process_pending_var_videos(match)
         except Exception as e:
-            print(f"[event_monitor] VAR video processing failed: {e}")
+            print(f"[event_monitor] VAR video failed: {e}")
 
         # ============================================================
-        # SCORE-BASED GOAL DETECTION (fallback when ESPN is slow)
+        # SCORE-BASED GOAL DETECTION (when ESPN details lag behind)
         # ============================================================
-        # ESPN sometimes updates the score BEFORE adding the goal to
-        # the 'details' array. This means match['goals'] is empty but
-        # match['home_score'] or match['away_score'] has increased.
-        # We detect this by comparing the current score to the
-        # previous score (stored in state.json), and send a goal alert
-        # even if we don't know the scorer yet.
         prev_score = state.get('prev_score') or {}
         prev_home = prev_score.get('home', 0)
         prev_away = prev_score.get('away', 0)
@@ -98,28 +93,18 @@ def main(match_id=None):
         curr_away = match['away_score']
 
         if curr_home > prev_home or curr_away > prev_away:
-            # Score increased - there's a goal we haven't reported yet
-            # Check if match['goals'] has it
             goals_from_details = match['goals']
             reported_goal_keys = [e for e in last_events if e.startswith('goal_')]
 
-            if len(goals_from_details) > len(reported_goal_keys):
-                # ESPN's details array has the goal - will be handled below
-                pass
-            else:
-                # ESPN hasn't added the goal to details yet, but the
-                # score has increased. Send a generic goal alert now
-                # (we'll update with the scorer's name when ESPN
-                # catches up).
+            if len(goals_from_details) <= len(reported_goal_keys):
+                # ESPN hasn't added the goal to details yet
                 which_team = 'home' if curr_home > prev_home else 'away'
                 goal_team = match['home_team'] if which_team == 'home' else match['away_team']
                 minute_str = match.get('clock', f"{match['minute']}'")
-                # Use a special event key that won't conflict with
-                # detail-based keys
                 event_key = f"goal_score_{which_team}_{minute_str}"
 
                 if event_key not in last_events:
-                    print(f"[event_monitor] SCORE INCREASED: {goal_team} scored at {minute_str} (ESPN details lagging)")
+                    print(f"[event_monitor] SCORE GOAL: {goal_team} at {minute_str}")
                     send_message(fmt.format_goal({
                         'team': goal_team,
                         'player': '(در حال دریافت...)',
@@ -130,12 +115,12 @@ def main(match_id=None):
                         'away_team': match['away_team'],
                     }))
                     last_events.append(event_key)
-                    # Queue for video lookup (we'll search by team+minute
-                    # since we don't have the player name yet)
                     if event_key not in video_pending and event_key not in video_sent:
                         video_pending.append(event_key)
 
-        # 1. Send new goal/card text messages + check hat-trick
+        # ============================================================
+        # GOAL DETECTION from match['goals'] (ESPN details)
+        # ============================================================
         for g in match['goals']:
             event_key = f"goal_{g['player']}_{g['minute']}"
             if event_key not in last_events:
@@ -145,15 +130,17 @@ def main(match_id=None):
                     'home_team': match['home_team'], 'away_team': match['away_team'],
                 }))
                 last_events.append(event_key)
-                # Queue for video lookup
                 if event_key not in video_pending and event_key not in video_sent:
                     video_pending.append(event_key)
-                # Check for hat-trick AFTER sending the goal message
                 check_hat_trick(match, g['player'], g['team'])
 
+        # ============================================================
+        # CARD DETECTION from match['cards']
+        # ============================================================
         for c in match['cards']:
             event_key = f"card_{c['player']}_{c['minute']}"
             if event_key not in last_events:
+                print(f"[event_monitor] CARD: {c['player']} ({c['team']}) {c['detail']} at {c['minute']}")
                 send_message(fmt.format_card({
                     'team': c['team'], 'player': c['player'],
                     'minute': c['minute'], 'detail': c['detail'],
@@ -177,32 +164,26 @@ def main(match_id=None):
                     except Exception as e:
                         print(f"[event_monitor] red card video failed: {e}")
 
-        # 2. Check for new substitutions + star player alerts
+        # ============================================================
+        # SUBSTITUTION DETECTION + star player alerts
+        # ============================================================
         for s in match.get('substitutions', []):
             sub_key = f"{s.get('out','')}|{s.get('in','')}|{s.get('minute','')}"
             if sub_key not in last_subs:
                 last_subs.append(sub_key)
-                # Check if this involves a star player (sends special alert)
-                is_star = check_star_substitution(match, s)
-                if not is_star:
-                    # Regular substitution - only report if it's notable
-                    # (we don't report every sub to avoid spam)
-                    pass
+                check_star_substitution(match, s)
 
-        # 3. Try to fetch and send videos for any pending goals (Reddit only)
-        # IMPORTANT: We wait at least 90 seconds after a goal is detected
-        # before searching Reddit, because r/soccer posts typically take
-        # 1-3 minutes to appear. Searching immediately finds wrong/old
-        # videos that happen to match the player name.
-        import time as _time
-        now_ts = _time.time()
-        # Track when each goal was first detected (for the delay)
+        # ============================================================
+        # VIDEO SEARCH for pending goals (with 90s delay)
+        # ============================================================
+        now_ts = time.time()
         goal_detect_times = state.get('goal_detect_times', {}) or {}
 
         still_pending = []
         for event_key in video_pending:
             if event_key in video_sent:
                 continue
+            # Find the goal info
             player_name = None
             minute_str = None
             goal_team = None
@@ -213,28 +194,45 @@ def main(match_id=None):
                     goal_team = g['team']
                     break
 
-            if not player_name:
+            # If not found in goals, check if it's a score-based goal
+            if not player_name and event_key.startswith('goal_score_'):
+                parts = event_key.split('_', 3)  # goal_score_home_14'
+                if len(parts) >= 4:
+                    which_team = parts[2]
+                    minute_str = parts[3]
+                    goal_team = match['home_team'] if which_team == 'home' else match['away_team']
+                    # Try to find the player from match['goals'] now
+                    for g in match['goals']:
+                        if g['minute'] == minute_str or minute_str in g['minute']:
+                            player_name = g['player']
+                            goal_team = g['team']
+                            break
+
+            if not player_name and not event_key.startswith('goal_score_'):
+                video_sent.append(event_key)
+                continue
+            if not goal_team:
                 video_sent.append(event_key)
                 continue
 
-            # Record when this goal was first detected
             if event_key not in goal_detect_times:
                 goal_detect_times[event_key] = now_ts
 
-            # Wait at least 90 seconds before the first search attempt
             seconds_since_goal = now_ts - goal_detect_times[event_key]
             if seconds_since_goal < 90:
-                print(f"[event_monitor] goal {event_key}: waiting {90-seconds_since_goal:.0f}s before Reddit search")
+                print(f"[event_monitor] {event_key}: waiting {90-seconds_since_goal:.0f}s")
                 still_pending.append(event_key)
                 continue
 
+            # Search Reddit for the goal video
+            search_player = player_name or goal_team
             video_url, video_title = fetch_reddit_goal_video(
-                player_name, minute_str,
+                search_player, minute_str or '',
                 match['home_team'], match['away_team'],
             )
 
             if video_url:
-                player_fa = fa(player_name, PLAYER_FA)
+                player_fa = fa(player_name, PLAYER_FA) if player_name else goal_team
                 team_fa = fa(goal_team, TEAM_FA)
                 caption = (
                     f"🎥 ویدیوی گلِ {player_fa} ({team_fa}) - دقیقه {minute_str}\n"
@@ -243,15 +241,14 @@ def main(match_id=None):
                 )
                 if send_video(video_url, caption=caption):
                     video_sent.append(event_key)
-                    print(f"Video sent for goal: {player_name} ({minute_str}) via Reddit")
+                    print(f"[event_monitor] video sent: {event_key}")
                 else:
                     video_sent.append(event_key)
-                    print(f"Video send failed for goal: {player_name} ({minute_str})")
+                    print(f"[event_monitor] video failed: {event_key}")
             else:
                 still_pending.append(event_key)
 
-        # Update state - also save goal_detect_times so the 90s delay
-        # persists across cron runs (each cron run is ~1 min apart).
+        # Update state
         update_match_state(
             str(match['id']),
             last_events=last_events[-100:],

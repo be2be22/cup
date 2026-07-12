@@ -144,7 +144,21 @@ class FootballAPIClient:
         for d in details:
             event_type = d.get('type', {}).get('text', '')
             team_id = d.get('team', {}).get('id', '')
-            team_name = teams_map.get(team_id, '?')
+            team_name = teams_map.get(team_id, '')
+            # Fallback: try to get team name from athletesInvolved
+            if not team_name:
+                athletes = d.get('athletesInvolved', [])
+                if athletes:
+                    athlete_team = athletes[0].get('team', {})
+                    athlete_team_id = athlete_team.get('id', '')
+                    athlete_team_name = athlete_team.get('displayName', '')
+                    if athlete_team_name:
+                        team_name = athlete_team_name
+                    elif athlete_team_id and athlete_team_id in teams_map:
+                        team_name = teams_map[athlete_team_id]
+            if not team_name:
+                team_name = '?'
+
             clock = d.get('clock', {}).get('displayValue', '?')
             athletes = d.get('athletesInvolved', [])
             player_name = athletes[0].get('displayName', '?') if athletes else '?'
@@ -159,21 +173,24 @@ class FootballAPIClient:
                     'minute': clock, 'scored': scored,
                     'detail': event_type,
                 })
-            elif event_type == 'Goal':
+            elif 'Goal' in event_type:
+                # Covers 'Goal', 'Goal - Header', 'Own Goal', 'Penalty Goal'
                 goals.append({
                     'team': team_name, 'player': player_name,
                     'minute': clock, 'detail': 'گل عادی',
                 })
-            elif 'Card' in event_type:
-                cd = 'کارت زرد' if 'Yellow' in event_type else 'کارت قرمز'
+            elif 'Card' in event_type or d.get('yellowCard') or d.get('redCard'):
+                # Detect cards by type OR by the yellowCard/redCard booleans
+                if 'Yellow' in event_type or (d.get('yellowCard') and 'Red' not in event_type):
+                    cd = 'کارت زرد'
+                else:
+                    cd = 'کارت قرمز'
                 cards.append({
                     'team': team_name, 'player': player_name,
                     'minute': clock, 'detail': cd,
                 })
             elif event_type == 'Substitution':
                 # Substitutions have 2 athletes: [out, in]
-                # ESPN text: "Substitution, Spain. Ferran Torres replaces Álex Baena."
-                # athletesInvolved: [ Torres (coming on), Baena (going off) ]
                 out_player = athletes[1].get('displayName', '?') if len(athletes) > 1 else '?'
                 in_player = athletes[0].get('displayName', '?') if athletes else '?'
                 substitutions.append({
