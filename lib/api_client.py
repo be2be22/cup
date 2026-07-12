@@ -78,10 +78,20 @@ class FootballAPIClient:
             return None
 
     def _date_range(self):
-        """Build the `dates=YYYYMMDD-YYYYMMDD` query window starting today."""
+        """Build the `dates=YYYYMMDD-YYYYMMDD` query window.
+
+        IMPORTANT: ESPN's `dates` parameter is based on US Eastern time,
+        not UTC. A match at 01:00 UTC on July 12 is actually 21:00 EDT
+        on July 11, so querying `dates=20260712` would MISS it. To work
+        around this, we start the window 1 day BEFORE today's UTC date
+        so matches that fall on "yesterday UTC" but "today US Eastern"
+        are still included.
+        """
         today = datetime.now(timezone.utc).date()
+        # Start 1 day earlier to account for the UTC-to-US timezone offset
+        start = today - timedelta(days=1)
         end = today + timedelta(days=FIXTURE_WINDOW_DAYS)
-        return f"{today.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
+        return f"{start.strftime('%Y%m%d')}-{end.strftime('%Y%m%d')}"
 
     def _get_scoreboard(self):
         cache_key = f"scoreboard_{self.league}"
