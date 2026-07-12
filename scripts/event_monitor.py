@@ -175,11 +175,20 @@ def main(match_id=None):
 
         # ============================================================
         # VIDEO SEARCH for pending goals (with 90s delay)
+        # IMPORTANT: this section is the SLOWEST part of the cron job
+        # because Reddit rate-limits us (429). We limit the number of
+        # video searches per cron run to 1, so even if there are 4
+        # pending goals, we only search for 1 per run (the oldest).
+        # This keeps the cron job fast (~5-10s) so live commentary
+        # isn't delayed.
         # ============================================================
         now_ts = time.time()
         goal_detect_times = state.get('goal_detect_times', {}) or {}
 
         still_pending = []
+        videos_searched_this_run = 0
+        MAX_VIDEO_SEARCHES_PER_RUN = 1  # limit to 1 per cron run
+
         for event_key in video_pending:
             if event_key in video_sent:
                 continue
@@ -224,11 +233,15 @@ def main(match_id=None):
                 still_pending.append(event_key)
                 continue
 
+            # Limit video searches per run to avoid blocking the cron
+            if videos_searched_this_run >= MAX_VIDEO_SEARCHES_PER_RUN:
+                print(f"[event_monitor] {event_key}: deferring to next run (max {MAX_VIDEO_SEARCHES_PER_RUN} searches/run)")
+                still_pending.append(event_key)
+                continue
+
+            videos_searched_this_run += 1
+
             # Search Reddit for the goal video
-            # IMPORTANT: if Reddit returns 429 (rate limited), we skip
-            # the video search entirely for this run to avoid blocking
-            # the cron job for minutes. The video will be searched
-            # again on the next cron run.
             search_player = player_name or goal_team
             try:
                 video_url, video_title = fetch_reddit_goal_video(
