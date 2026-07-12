@@ -82,6 +82,59 @@ def main(match_id=None):
         except Exception as e:
             print(f"[event_monitor] VAR video processing failed: {e}")
 
+        # ============================================================
+        # SCORE-BASED GOAL DETECTION (fallback when ESPN is slow)
+        # ============================================================
+        # ESPN sometimes updates the score BEFORE adding the goal to
+        # the 'details' array. This means match['goals'] is empty but
+        # match['home_score'] or match['away_score'] has increased.
+        # We detect this by comparing the current score to the
+        # previous score (stored in state.json), and send a goal alert
+        # even if we don't know the scorer yet.
+        prev_score = state.get('prev_score') or {}
+        prev_home = prev_score.get('home', 0)
+        prev_away = prev_score.get('away', 0)
+        curr_home = match['home_score']
+        curr_away = match['away_score']
+
+        if curr_home > prev_home or curr_away > prev_away:
+            # Score increased - there's a goal we haven't reported yet
+            # Check if match['goals'] has it
+            goals_from_details = match['goals']
+            reported_goal_keys = [e for e in last_events if e.startswith('goal_')]
+
+            if len(goals_from_details) > len(reported_goal_keys):
+                # ESPN's details array has the goal - will be handled below
+                pass
+            else:
+                # ESPN hasn't added the goal to details yet, but the
+                # score has increased. Send a generic goal alert now
+                # (we'll update with the scorer's name when ESPN
+                # catches up).
+                which_team = 'home' if curr_home > prev_home else 'away'
+                goal_team = match['home_team'] if which_team == 'home' else match['away_team']
+                minute_str = match.get('clock', f"{match['minute']}'")
+                # Use a special event key that won't conflict with
+                # detail-based keys
+                event_key = f"goal_score_{which_team}_{minute_str}"
+
+                if event_key not in last_events:
+                    print(f"[event_monitor] SCORE INCREASED: {goal_team} scored at {minute_str} (ESPN details lagging)")
+                    send_message(fmt.format_goal({
+                        'team': goal_team,
+                        'player': '(در حال دریافت...)',
+                        'minute': minute_str,
+                        'home_score': curr_home,
+                        'away_score': curr_away,
+                        'home_team': match['home_team'],
+                        'away_team': match['away_team'],
+                    }))
+                    last_events.append(event_key)
+                    # Queue for video lookup (we'll search by team+minute
+                    # since we don't have the player name yet)
+                    if event_key not in video_pending and event_key not in video_sent:
+                        video_pending.append(event_key)
+
         # 1. Send new goal/card text messages + check hat-trick
         for g in match['goals']:
             event_key = f"goal_{g['player']}_{g['minute']}"
