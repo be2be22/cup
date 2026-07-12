@@ -127,24 +127,65 @@ def update_live_thread(match):
     if now - last_edit < MIN_EDIT_INTERVAL:
         return False
 
-    if _edit_channel_post(msg_id, text):
+    edit_result = _edit_channel_post(msg_id, text)
+    if edit_result:
         update_match_state(match_id, live_thread_last_edit=now)
         return True
-    else:
-        # Try sending a new message (the old one might have been deleted)
-        result = _send_and_get_id(text)
-        if result:
-            update_match_state(match_id,
-                live_thread_msg_id=result,
-                live_thread_last_edit=now,
-            )
-            # Re-pin the new message
-            try:
-                from lib.telegram_sender import pin_chat_message
-                pin_chat_message(result, disable_notification=True)
-            except Exception as e:
-                print(f"[live_thread] re-pin failed: {e}")
+    elif edit_result is False:
+        # editMessageText returned ok=false. This could mean:
+        # 1. The message was deleted by the user
+        # 2. The message content is identical (no change needed) - Telegram returns
+        #    'message is not modified' error
+        # 3. A temporary Telegram API issue
+        #
+        # For case 2 (identical content), we should NOT create a new message.
+        # For case 1 (deleted), we SHOULD create a new one.
+        # For case 3 (temporary), we should retry next time.
+        #
+        # We check the error: if it's 'message is not modified', just update
+        # the timestamp and return (no new message needed).
+        # If it's 'message to edit not found', the message was deleted - create
+        # a new one.
+        # Otherwise, don't create a new message (avoid spam).
+        from lib.telegram_sender import _call, _default_channel_id
+        # Re-attempt to detect the specific error
+        channel_id = _default_channel_id()
+        check = _call("editMessageText", {
+            "chat_id": channel_id,
+            "message_id": msg_id,
+            "text": text + " ",  # add a space to force a change
+            "parse_mode": "Markdown",
+            "disable_web_page_preview": True,
+        })
+        if check and check.get("ok"):
+            # The second attempt with a forced change worked - message exists.
+            # Update timestamp so we don't retry too soon.
+            update_match_state(match_id, live_thread_last_edit=now)
             return True
+        elif check and "not modified" in str(check.get("description", "")).lower():
+            # Content was identical - just update timestamp
+            update_match_state(match_id, live_thread_last_edit=now)
+            return True
+        elif check and "not found" in str(check.get("description", "")).lower():
+            # Message was deleted - create a new one
+            print(f"[live_thread] message {msg_id} was deleted, creating new one")
+            result = _send_and_get_id(text)
+            if result:
+                update_match_state(match_id,
+                    live_thread_msg_id=result,
+                    live_thread_last_edit=now,
+                )
+                try:
+                    from lib.telegram_sender import pin_chat_message
+                    pin_chat_message(result, disable_notification=True)
+                except Exception as e:
+                    print(f"[live_thread] re-pin failed: {e}")
+                return True
+        else:
+            # Unknown error - don't create a new message, just update timestamp
+            # to avoid spamming. We'll retry on the next cron run.
+            print(f"[live_thread] edit failed with unknown error, skipping: {check}")
+            update_match_state(match_id, live_thread_last_edit=now)
     return False
 
 
