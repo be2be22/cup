@@ -38,7 +38,7 @@ _CACHE_TTL_SECONDS = 600  # 10 minutes
 
 # Rate limit: minimum seconds between consecutive Reddit requests.
 # Reddit 429s aggressively, so we space out requests.
-_MIN_REQUEST_INTERVAL = 30  # 30 seconds between requests
+_MIN_REQUEST_INTERVAL = 45  # 45 seconds between requests (was 30, still 429ing)
 _last_request_time = 0.0
 _rate_lock = threading.Lock()
 

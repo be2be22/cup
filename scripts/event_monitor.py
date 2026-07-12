@@ -225,11 +225,22 @@ def main(match_id=None):
                 continue
 
             # Search Reddit for the goal video
+            # IMPORTANT: if Reddit returns 429 (rate limited), we skip
+            # the video search entirely for this run to avoid blocking
+            # the cron job for minutes. The video will be searched
+            # again on the next cron run.
             search_player = player_name or goal_team
-            video_url, video_title = fetch_reddit_goal_video(
-                search_player, minute_str or '',
-                match['home_team'], match['away_team'],
-            )
+            try:
+                video_url, video_title = fetch_reddit_goal_video(
+                    search_player, minute_str or '',
+                    match['home_team'], match['away_team'],
+                )
+            except Exception as e:
+                if '429' in str(e):
+                    print(f"[event_monitor] Reddit 429 rate limited, skipping video search")
+                    video_url = None
+                else:
+                    raise
 
             if video_url:
                 player_fa = fa(player_name, PLAYER_FA) if player_name else goal_team

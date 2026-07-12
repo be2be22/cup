@@ -21,7 +21,7 @@ import time
 
 from lib.api_client import _load_league
 from lib.match_summary import fetch_summary
-from lib.formatter import fa, TEAM_FA, get_flag, SEP
+from lib.formatter import fa, TEAM_FA, PLAYER_FA, get_flag, SEP
 from lib.telegram_sender import send_message, send_video
 from lib.state_manager import get_match_state, update_match_state
 from lib.reddit_video import fetch_reddit_key_moment_video
@@ -51,17 +51,19 @@ def _is_var_event(text):
     return False
 
 
-def _extract_var_description(text, home_team, away_team):
+def _extract_var_description(text, home_team, away_team, commentary=None):
     """Build a short Persian description of the VAR event from the
     English commentary text.
-    
+
     Returns a dict with:
-      - 'type': 'goal_overturned', 'penalty_awarded', 'penalty_denied', 'no_goal', 'general'
+      - 'type': 'goal_overturned', 'penalty_awarded', 'penalty_denied', 'no_goal', 'card_changed', 'general'
       - 'description_fa': Persian description for the alert message
       - 'search_query': English search query for Reddit (e.g., 'VAR England penalty')
+      - 'team': which team the event is about (may be None)
+      - 'player': which player (extracted from nearby commentary for card_changed)
     """
     text_lower = text.lower()
-    
+
     # Determine the type of VAR event
     if 'goal overturned' in text_lower or 'ruled out' in text_lower:
         event_type = 'goal_overturned'
@@ -75,17 +77,53 @@ def _extract_var_description(text, home_team, away_team):
     elif 'no goal' in text_lower:
         event_type = 'no_goal'
         description_fa = 'گل‌نشدن توسط VAR تأیید شد'
+    elif 'card changed' in text_lower:
+        event_type = 'card_changed'
+        description_fa = 'تغییر کارت توسط VAR'
     else:
         event_type = 'general'
         description_fa = 'تصمیم VAR'
-    
+
     # Try to identify which team the VAR event is about
     team_mentioned = None
     for team in [home_team, away_team]:
         if team.lower() in text_lower:
             team_mentioned = team
             break
-    
+
+    # For 'card_changed', try to find the player from the NEXT
+    # commentary entry (ESPN usually follows "VAR Decision: Card Changed"
+    # with "Second yellow card to Player (Team)" or "Red card to Player")
+    player = None
+    if event_type == 'card_changed' and commentary:
+        # Find the VAR entry's position in commentary
+        for i, c in enumerate(commentary):
+            if c.get('text', '') == text:
+                # Look at the next 1-3 entries for card details
+                for j in range(i + 1, min(i + 4, len(commentary))):
+                    next_text = commentary[j].get('text', '') or ''
+                    # Look for "yellow card to PlayerName (TeamName)" or "red card to..."
+                    import re
+                    card_match = re.search(
+                        r'(?:second yellow card|red card) to ([^(]+)\s*\(([^)]+)\)',
+                        next_text, re.IGNORECASE,
+                    )
+                    if card_match:
+                        player = card_match.group(1).strip()
+                        team_name = card_match.group(2).strip()
+                        # Match team_name to home/away
+                        for team in [home_team, away_team]:
+                            if team.lower() == team_name.lower():
+                                team_mentioned = team
+                                break
+                        # Update description
+                        if 'second yellow' in next_text.lower():
+                            description_fa = 'کارت زرد دوم (و قرمز) توسط VAR'
+                        elif 'red card' in next_text.lower():
+                            description_fa = 'کارت قرمز توسط VAR'
+                        break
+                break
+
     # Build the search query for Reddit
     # r/soccer VAR posts look like: "England penalty overturned by VAR 103'"
     # or "VAR: No goal Norway 55'"
@@ -104,6 +142,7 @@ def _extract_var_description(text, home_team, away_team):
         'description_fa': description_fa,
         'search_query': ' '.join(query_parts),
         'team': team_mentioned,
+        'player': player,
     }
 
 
@@ -151,23 +190,28 @@ def check_var_events(match):
             continue
         
         # New VAR event detected!
-        var_info = _extract_var_description(text, match['home_team'], match['away_team'])
-        
+        var_info = _extract_var_description(text, match['home_team'], match['away_team'], commentary)
+
         # Send the text alert immediately
         home_fa = fa(match['home_team'], TEAM_FA)
         away_fa = fa(match['away_team'], TEAM_FA)
         score = f"{match['home_score']} - {match['away_score']}"
-        
+
         emoji = '📺'  # VAR emoji
         team_str = ''
         if var_info['team']:
             team_fa = fa(var_info['team'], TEAM_FA)
             team_str = f' | {get_flag(var_info["team"])} {team_fa}'
-        
+
+        player_str = ''
+        if var_info.get('player'):
+            player_fa = fa(var_info['player'], PLAYER_FA)
+            player_str = f'\n👤 بازیکن: {player_fa}'
+
         msg = (
             f"\n{emoji} *تصمیم VAR*\n{SEP}\n"
             f"⏱️ دقیقه {minute}{team_str}\n"
-            f"📋 {var_info['description_fa']}\n"
+            f"📋 {var_info['description_fa']}{player_str}\n"
             f"⚽ {get_flag(match['home_team'])} {home_fa}  {score}  {away_fa} {get_flag(match['away_team'])}\n"
             f"{SEP}"
         ).strip()
